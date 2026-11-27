@@ -6,6 +6,7 @@ import { buildKeyWrapper } from "../../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { rewrapTenantKeys } from "../../kernel/personal-data/master-rotation.ts";
 import { defineTenantKeyStore } from "../../kernel/personal-data/tenant-key-source.ts";
+import { removeStaleTenantKeys } from "../../kernel/personal-data/tenant-key-stores.ts";
 import { openTenantKeys } from "../../kernel/personal-data/tenant-keys.ts";
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
@@ -42,6 +43,7 @@ const version = (kid: string) => ({
 const unclosed = (store: TenantKeyStore): TenantKeyStore => ({
   get: (tenant) => store.get(tenant),
   put: (tenant, record, expected) => store.put(tenant, record, expected),
+  remove: (tenant, expected) => store.remove(tenant, expected),
   list: (args) => store.list(args),
   ...(store.oneWriterPerTenant === undefined
     ? {}
@@ -159,6 +161,114 @@ export const tenantKeyStoreContract: TenantKeyStoreContractFunction = ({
         } while (cursor !== null);
         expect(listed).toEqual([...tenants].sort());
         expect((await store.list({ cursor: null, limit: 10 })).cursor).toBeNull();
+      } finally {
+        await store.close?.();
+      }
+    });
+
+    it("removes a record only at the revision read, and lists its tenant no more", async () => {
+      const store = await create();
+      try {
+        await store.put("acme", record(["t-1"]), null);
+        await store.put("acme", record(["t-2", "t-1"]), 1);
+        await store.put("globex", record(["g-1"]), null);
+        expect(await store.remove("acme", 1)).toBe(false);
+        expect(await store.remove("initech", 1)).toBe(false);
+        expect((await store.get("acme"))?.revision).toBe(2);
+        expect(await store.remove("acme", 2)).toBe(true);
+        expect(await store.get("acme")).toBeNull();
+        expect(await store.remove("acme", 2)).toBe(false);
+        expect(await store.get("globex")).toEqual({ ...record(["g-1"]), revision: 1 });
+        expect((await store.list({ cursor: null, limit: 10 })).tenants).toEqual(["globex"]);
+        // A record put again starts over.
+        expect(await store.put("acme", record(["t-3"]), null)).toBe(true);
+        expect(await store.get("acme")).toEqual({ ...record(["t-3"]), revision: 1 });
+      } finally {
+        await store.close?.();
+      }
+    });
+
+    it("has a copy left in a store a tenant's configuration no longer names removed, only once its own store holds the same key", async () => {
+      const [one, two] = [await create(), await create()];
+      try {
+        // acme and initech moved to the second store; initech's record never followed.
+        await one.put("acme", record(["t-1"]), null);
+        await two.put("acme", record(["t-1"]), null);
+        await one.put("initech", record(["i-1"]), null);
+        await one.put("globex", record(["g-1"]), null);
+        const [oneKeys, twoKeys] = [
+          defineTenantKeyStore(() => unclosed(one)),
+          defineTenantKeyStore(() => unclosed(two)),
+        ];
+        const config: ProjectConfig = ({ tenant }) => ({
+          storage: memory(),
+          runtime: {
+            personalData: {
+              tenantKeys: tenant === "acme" || tenant === "initech" ? twoKeys : oneKeys,
+            },
+          },
+        });
+        const { removed, refused, unreached } = await removeStaleTenantKeys({ config, env: {} });
+        expect(unreached).toEqual([]);
+        expect(refused.map(({ tenant, namedBy }) => [tenant, namedBy])).toEqual(
+          one.oneWriterPerTenant === true
+            ? [
+                ["acme", "default"],
+                ["initech", "default"],
+              ]
+            : [["initech", "default"]],
+        );
+        expect(String(refused.at(-1)?.error)).toContain(
+          one.oneWriterPerTenant === true
+            ? "which each tenant's own writer alone writes"
+            : "is the only one",
+        );
+        if (one.oneWriterPerTenant === true) {
+          expect(removed).toEqual([]);
+          return;
+        }
+        expect(removed).toEqual([
+          {
+            tenant: "acme",
+            namedBy: "default",
+            named: "holds",
+            lost: { versions: [], files: [] },
+          },
+        ]);
+        expect(await one.get("acme")).toBeNull();
+        expect(await two.get("acme")).toEqual({ ...record(["t-1"]), revision: 1 });
+        expect(await one.get("initech")).toEqual({ ...record(["i-1"]), revision: 1 });
+        expect(await one.get("globex")).toEqual({ ...record(["g-1"]), revision: 1 });
+      } finally {
+        await one.close?.();
+        await two.close?.();
+      }
+    });
+
+    it("never removes a tenant's own record through two definitions of one store", async () => {
+      const store = await create();
+      try {
+        await store.put("acme", record(["t-1"]), null);
+        // Built anew for each tenant, as a configuration that is a function of the tenant may.
+        const config: ProjectConfig = () => ({
+          storage: memory(),
+          runtime: {
+            personalData: { tenantKeys: defineTenantKeyStore(() => unclosed(store)) },
+          },
+        });
+        const { removed, refused } = await removeStaleTenantKeys({
+          config,
+          env: {},
+          tenant: "globex",
+        });
+        expect(removed).toEqual([]);
+        expect(refused.map(({ tenant }) => tenant)).toEqual(["acme"]);
+        expect(String(refused[0]?.error)).toContain(
+          store.oneWriterPerTenant === true
+            ? "which each tenant's own writer alone writes"
+            : "answer as one store",
+        );
+        expect((await store.get("acme"))?.keys).toEqual(record(["t-1"]).keys);
       } finally {
         await store.close?.();
       }

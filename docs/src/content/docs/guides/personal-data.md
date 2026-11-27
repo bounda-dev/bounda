@@ -769,7 +769,11 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   ],
   recipients: [
     { port: "customer.mailer", name: "Mailchimp", kind: "processor", country: "US",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      transfer: { safeguard: "adequacy", article: "45", regime: "US",
+        partialAdequacy: { scope: "data-privacy-framework",
+          decision: "Commission Implementing Decision (EU) 2023/1795", celex: "32023D1795",
+          covers: "organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce",
+          condition: "on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other" } },
       status: "disclosed",
       categories: [{ name: "profile", basis: "contract" }],
       firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
@@ -777,7 +781,7 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   ],
   transfers: [
     { store: "tenant-keys", readModel: null, location: "ch", safeguard: "adequacy", article: "45",
-      regime: "CH" },
+      regime: "CH", partialAdequacy: null },
   ],
   redactions: [
     { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
@@ -886,15 +890,17 @@ error's text or a rejection's message may quote any of their data.
 `recipients` are the [recipients](#recipients) of their data, as `recipientsOf` lists them: each
 one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
 categories concerned and their basis, its country and, for a transfer out of the European Economic
-Area, its safeguard, the article it rests on and the legal regime the data goes to, as article
-15(1)(c) asks.
+Area, its safeguard, the article it rests on, the legal regime the data goes to and, when the
+safeguard is a [partial adequacy decision](/reference/configuration/#partial-adequacy-decisions),
+that decision as `partialAdequacy`, as article 15(1)(c) asks.
 
 `transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each under the
 safeguard that allows it, as article 15(2) asks: a read model that holds personal data
 (`read-model`, with its name), the master key, the tenant's key, or the forget ledger, with its
-`location`, its `safeguard`, the `article` it rests on and the `regime`, the legal regime the store
+`location`, its `safeguard`, the `article` it rests on, the `regime`, the legal regime the store
 is under as [`regimeOf`](/reference/configuration/#data-location) names its location: a store in
-`"fedramp"` is under `"US"`. It is empty while every store is kept
+`"fedramp"` is under `"US"`, and `partialAdequacy`, the partial adequacy decision it rests on or
+`null`. It is empty while every store is kept
 where `storage` is. See [stores in another jurisdiction](#stores-in-another-jurisdiction).
 
 `redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
@@ -1612,6 +1618,30 @@ Economic Area takes the `safeguard` its transfer rests on: `adequacy` (article 4
 the Åland Islands (`AX`) and the outermost regions of France (`GF`, `GP`, `MF`, `MQ`, `RE`, `YT`)
 included, takes none. A port of a read model may declare one too, for what its queries hand it.
 
+The decisions for Canada and the United States cover some recipients alone: the Canadian one those
+subject to PIPEDA, the American one organisations on the Data Privacy Framework List
+(`PARTIAL_ADEQUACY`). A recipient there rests on `adequacy` only beside its **`adequacyScope`**,
+`"pipeda"` or `"data-privacy-framework"`, which says you verified it is one of them; one that is
+not rests on another safeguard, such as `standard-contractual-clauses`:
+
+```ts
+export const recipient = {
+  name: "Mailchimp",
+  kind: "processor",
+  country: "US",
+  safeguard: "adequacy",
+  adequacyScope: "data-privacy-framework",
+  categories: ["profile"],
+} as const satisfies Port.Recipient;
+```
+
+The types refuse `adequacy` there without it, another country's scope, and an `adequacyScope`
+anywhere else, and so do the app when it starts and the record of processing, naming the decision
+and what to verify. The
+[record of processing](#the-record-of-processing-activities), `recipientsOf` and the exports then
+name the decision next to the transfer, with its condition, which stays yours to keep true: why is
+in [partial adequacy decisions](/reference/configuration/#partial-adequacy-decisions).
+
 Five of the six handlers tell the recipient of one event of the person's stream `bounda:<personId>`:
 a [forgetting](#forgetting-a-person), a [restriction](#restricting-processing), the announcement of
 its lift, which article 18(3) asks be made before it, the lift, and a
@@ -1625,8 +1655,8 @@ nothing to do with an event, as one whose provider has no notion of an announced
 doing nothing: the generator types every handler, `.bounda/types.ts` fails to compile while the
 module declares a `recipient` and lacks one of them, or while a method of the port answers
 something other than a promise, naming the port and the event, and the app refuses to start on the
-same, and on a declaration without a name, a kind, an ISO country, the safeguard of a transfer, or
-categories the app has.
+same, and on a declaration without a name, a kind, an ISO country, the safeguard of a transfer, the
+`adequacyScope` of a partial adequacy decision, or categories the app has.
 
 ### What was disclosed
 
@@ -1690,7 +1720,7 @@ recipient by hand and discard the letter.
 
 With a [forget ledger](#backups), the first disclosure of each category of a person to a recipient
 goes to the ledger before the port is called, with the recipient's identity and the transfer it
-rests on then, its safeguard, article and regime, so a restore that loses it records it again at the
+rests on then, its safeguard, article, regime and any partial adequacy decision, so a restore that loses it records it again at the
 next reconciliation, unless a forgetting of that category came after it. Without one, once the
 database is known to have gone back, by `bounda restored` or the restore watch, every recipient is
 presumed to hold the data of every person whose data existed then.
@@ -1702,7 +1732,8 @@ person may ask (article 19): those disclosed data of theirs, with the identity t
 then and when it was first and last recorded; those presumed to hold it; and those declared for a
 category the person has data of that received none yet and may (article 15(1)(c) asks for those
 too). Each one with its `port`, `name`, `kind`, `country`, `transfer`, the `safeguard` of one out of
-the European Economic Area, the `article` it rests on and the `regime` the data goes to, or `null`,
+the European Economic Area, the `article` it rests on, the `regime` the data goes to and the
+`partialAdequacy` it rests on, if any, or `null`,
 its `status`, `disclosed`, `presumed` or `declared`, the
 `categories` concerned with their basis, and `declared`, `false` for a port the app no longer
 declares. The [export](#exporting-a-persons-data) lists the same as `recipients`. Each call is
@@ -2073,9 +2104,11 @@ one, raises, and which a record printed before Bounda numbered the format lacks.
   [`location`](/reference/configuration/#data-location) declares it, or
   [a Durable Object jurisdiction](/adapters/cloudflare/#data-location), with the transfer when it
   is kept out of `storage`'s: the legal regime it goes to, its safeguard and the article it rests
-  on;
+  on, and on a [partial adequacy decision](/reference/configuration/#partial-adequacy-decisions),
+  the decision, whom it covers and what to verify of the provider;
 - each [recipient](#recipients): its port, name, kind, country, the transfer when it is out of the
-  European Economic Area, with the regime, the safeguard and its article, and the categories it
+  European Economic Area, with the regime, the safeguard and its article, and on a partial adequacy
+  decision, the decision, whom it covers and what to verify of the recipient, and the categories it
   receives;
 - what the runtime keeps about persons besides those fields: their keys, their activity and
   restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
@@ -2312,9 +2345,10 @@ starts meanwhile could not write to the database: a store of your own keeps the 
 field as it was put. A store written by several
 instances compares the record's revision and writes it in one step, so two instances never put two
 first versions in force; `defineTenantKeyStore` documents what a store of your own must do: get
-and put a tenant's record, and list its tenants in pages, from a cursor, which a rotation of the
-master key goes through. A store that cannot compare and set says `oneWriterPerTenant: true`, as
-KV's does, and nothing but each tenant's own writer then rewraps a record there.
+and put a tenant's record, remove it while it is still at the revision read, and list its tenants
+in pages, from a cursor, which a rotation of the master key goes through. A store that cannot
+compare and set says `oneWriterPerTenant: true`, as KV's does, and nothing but each tenant's own
+writer then rewraps or removes a record there.
 
 The database keeps its half of the binding in `bounda_tenancy`: the tenant it belongs to, the same
 random id and when it was bound. An app that serves another tenant than the database's is refused,
@@ -2357,6 +2391,39 @@ another tenant's. Which tenant an app serves depends on the host:
 
 A tenant whose name changes is another tenant: its database is refused with the old name's record.
 
+### Moving a tenant's key to another store
+
+A configuration that is a function of the tenant may move a tenant to another tenant key store:
+copy its record there, then name the new store for it. The record in the store it moved from is
+left behind, and nothing in the app reads it again, but it still holds the tenant's key, wrapped
+under the master key: a stale copy. It outlives a [forgetting](#forgetting-a-tenant) that reaches
+only the named store, and it keeps a version [retired](#rotating-the-tenants-key) since, so data
+meant to open no more opens with it.
+
+`bounda tenant-key status` reads every tenant key store the configuration can name, as
+[`rewrap-master`](#rotating-the-master-key) reaches them, writing nothing, and names each copy of a
+tenant's record in a store its configuration does not name, with what the named store holds of it:
+the same key, the tenant's forgetting, not all of the copy's versions and file keys, or no record
+at all. `bounda tenant-key remove-stale` removes the copies, every tenant's or those it names:
+
+```bash
+bounda tenant-key status
+bounda tenant-key remove-stale
+```
+
+A copy goes only once the named store holds every version and file key it holds, or the tenant's
+forgetting; one holding keys the named store lacks, as versions retired there since, stays unless
+`--despite-lost-keys` says what was encrypted under them, a backup or the database the copy belonged
+to, may open no more; and the only copy of a tenant's key never goes, whatever the options say. A
+store each tenant's own writer alone writes, as KV is, is never written from outside: its copies
+are named, and are removed by hand. Two definitions of one store, as a configuration that builds a
+new `defineTenantKeyStore` for each tenant makes, look like two: before it removes a copy,
+`remove-stale` writes it again and reads the named record, which moves with it exactly when they
+are one store, and refuses then, the tenant's own record untouched. It exits with `2` while a copy
+is left or a store could not be listed, naming each. `inspectTenantKeys` and
+`removeStaleTenantKeys` from `@bounda-dev/core` do the same in code, with `projectConfig` and
+`tenants` from `loadProject`, as `rewrapTenantKeys` takes them.
+
 ### Rotating the master key
 
 Generate a new key, give it the variable the configuration reads, and move the old one to
@@ -2386,6 +2453,12 @@ Object that sleeps or a tenant no process serves, is reached from the tenant key
 - On Cloudflare each tenant's record is written by its own object alone, which KV needs: the
   `scheduled` of `createWorker` wakes every object still under a previous master key, which
   rewraps its own (see [Cloudflare](/adapters/cloudflare/#rotating-the-master-key)).
+
+`bounda tenant-key status` follows a rotation in Node across the same stores, writing nothing: it
+names the tenants whose key, in any store, is still under a previous master key of their own
+configuration's, so it watches a rotation before `rewrap-master` runs and after, and exits with `2`
+while a tenant's stores could not be listed or its record read, since a store not read may hold
+keys under a previous master key. `inspectTenantKeys` returns the same in code.
 
 Each app logs once its own tenant's key is rewrapped:
 
@@ -2616,6 +2689,10 @@ export default defineConfig({
   or under a `storage` that declares no location, `adequacy` for a location no adequacy decision
   covers, and a `derogation`, which article 49 allows for occasional transfers alone, never for a
   store that keeps data as long as the app runs.
+- In Canada and the United States, `"ca"`, `"us"`, `"fedramp"` and `"fedramp-high"`, the adequacy
+  decision covers some providers alone, so a store there rests on `adequacy` only beside its
+  `adequacyScope`, `"pipeda"` or `"data-privacy-framework"`, which says you verified the provider
+  is one: see [partial adequacy decisions](/reference/configuration/#partial-adequacy-decisions).
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
   store by the legal regime it goes to, `in ch, transferred to CH under adequacy (article 45)`, and
   every person's
@@ -2732,7 +2809,7 @@ then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`6`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`7`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `recipient` | each recipient of the tenant's data, the `person` parts' recipients summed: one per port, identity it had then and status, with its `country` and `transfer`, the categories concerned, the earliest and latest disclosure, and how many `persons` list it so; and each recipient the app declares that no person lists under its identity now, `declared`, for none |
 | `forgottenRecipient` | each recipient that persons since [forgotten](#forgetting-a-person) were listed with, one per port, identity it had then, with its `country` and `transfer`, and status, `disclosed` or `presumed`: how many `persons` forgettings took off it whole, and each category taken off it with its `basis` and how many `persons`; never whom, nor when |
@@ -2757,10 +2834,10 @@ the data, not the means to open it.
 
 Where the tenant's data went, and on what each transfer rests, is in two places. The header's
 `transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each with its
-`location`, `regime`, `safeguard` and `article` (see [stores in another
+`location`, `regime`, `safeguard`, `article` and `partialAdequacy` (see [stores in another
 jurisdiction](#stores-in-another-jurisdiction)). The `recipient` parts are every recipient the
 data went to, may hold it or may receive it, each with its `country` and, out of the European
-Economic Area, the `transfer`: its `safeguard`, `article` and `regime`. A recipient that moved, or changed
+Economic Area, the `transfer`: its `safeguard`, `article`, `regime` and `partialAdequacy`. A recipient that moved, or changed
 its safeguard, comes once under each identity its disclosures were recorded with, so each transfer
 is told under what allowed it then. Each person's part says which of them hold their data. A
 [forgetting](#forgetting-a-person) removes the disclosures it forgot, so they count in no
@@ -2776,7 +2853,7 @@ forgetting erased (see [the GDPR reference](/reference/gdpr/#erasure-article-17)
 ledger](#the-forget-ledger), the first disclosure of each category of a person to a recipient is
 also among the `forgetLedgerEntry` parts, for as long as the ledger keeps it, with the recipient's
 identity and country then and the `transfer` it rested on as the ledger kept it when it was first
-recorded, `null` in the European Economic Area: its `safeguard`, `article` and `regime` of that day,
+recorded, `null` in the European Economic Area: its `safeguard`, `article`, `regime` and `partialAdequacy` of that day,
 never derived again from what the country is now.
 
 What it leaves out is not data of the tenant's: snapshots, the state of aggregates the events it
@@ -2842,14 +2919,22 @@ data must stay: [hand it back](#handing-a-tenant-back) first, then pass
 `{ despiteLegalObligations: true }`. The other
 exemptions of article 17(3) do not stop it: they let the controller keep data, without requiring it
 to. It resolves to
-`{ tenant, forgottenAt, eventId }`; `bounda forget-tenant <tenant> --yes` does the same from a
-terminal.
+`{ tenant, forgottenAt, eventId, keyCopies }`; `bounda forget-tenant <tenant> --yes` does the same
+from a terminal.
 
 It runs in this order, every step safe to run again:
 
 1. The tenant's record in the tenant key store loses every version of its key and records the
    forgetting, when and under which event id. This is the step that cannot be undone, and the only
    one needed: from here on nothing personal of the tenant opens anywhere.
+   A copy of the record left in a store the tenant's configuration no longer names, as a
+   [move](#moving-a-tenants-key-to-another-store) leaves one, still holds the key: an app that
+   knows the whole project, as `boot()` and the CLI create it, removes every copy the stores of
+   the configuration reach once the others are done, and `keyCopies` says which it removed, and
+   those left, logged as an error, which calling `forgetTenant` again, on this app or one started
+   on the forgotten tenant, tries again. An app from `createApp` without `project`, as a Durable
+   Object's, reaches only the store its configuration names, and `keyCopies` is `null`; `bounda
+   tenant-key status` names a forgotten tenant's copies and exits with `2` while one is left.
 2. The fences of the [forget ledger](#the-forget-ledger), the database and every read model's
    database are raised for good, as a [freeze](#freezing-a-tenant)'s are, but `forgotten`: from
    here on no write of the tenant lands from any instance, however long ago it last read the
@@ -3366,11 +3451,12 @@ and `bounda status` counts the restores found. How it is found depends on when t
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
 it wrote, at most every five seconds, and remembers what it read: a copy holds less, and the
-first instance to see it counts the restore in another row, which every other instance then sees
-changed. An idle instance writes nothing, so neither does its watch. Every instance also watches
-the newest event it read, or committed as a forgetting, at its position: events are only ever
-appended, so a copy that lost it is found at once, even one taken in the five seconds before the
-counter moved. A pass that finds a restore reconciles the ledger before the dispatcher delivers
+first instance to see it counts the restore in another row, with the time it counted it, which
+every other instance then sees changed, even when the count, made while the ledger could not say
+the latest, took a number already counted. An idle instance writes nothing, so neither does its
+watch. Every instance also watches the newest event it read, or committed as a forgetting, at its
+position: events are only ever appended, so a copy that lost it is found at once, even one taken
+in the five seconds before the counter moved. A pass that finds a restore reconciles the ledger before the dispatcher delivers
 anything or the worker claims anything, so a scheduled command of someone the copy brought back
 never runs. [Backups and restores](/guides/backups/) has the steps for each engine. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
@@ -3379,24 +3465,29 @@ copy another instance told the ledger of is found by one that saw nothing of wha
 no move of the counter passes a mark nobody compared. An instance that stops after the copy came
 back, before it looked again, counts nothing but raises the mark past what it saw, for the next
 look to count. The count of restores goes to the ledger as well: a copy brings back the count it
-held, and the next restore still counts past every one found before. A committed forgetting,
-restriction or redaction the ledger holds that the database does not is a restore too, whatever
-the counter says, found by the reconciliation that applies it again, at a start, on a round or
-before a freeze, at once however young it is; so is one nothing is left to apply again, when the
-same reconciliation forgot that person by an earlier entry, or when it was written where the
-database still stands. A restore counted that no reconciliation has read the ledger through after,
-because the ledger could not be read then, is the restore its lost entries tell, whichever instance
-reconciles next. An intention whose
+held, and the next restore still counts past every one found before; a database holding fewer
+restores than the ledger counted since the latest restore it counted is a copy from before that
+count, a restore. A committed forgetting,
+restriction or redaction the ledger holds that the database does not, written after the latest
+restore counted, is a restore too, whatever the counter says, found by the reconciliation that
+applies it again, at a start, on a round or before a freeze, at once however young it is, or that
+finds nothing left to apply, when the same reconciliation forgot that person by an earlier entry.
+One written by the time the latest restore was counted is what that restore lost, or one before,
+however late a read shows it or the ledger takes it, as a write given up for its timeout and landed
+later is, and tells no other: the database keeps the time of the latest restore counted, which a
+copy brings back as it held it. An intention whose
 commit never came is applied again and is no restore: a process that stopped, or a transaction
 that failed, between the intention and the commit leaves no count behind. An intention keeps where
 the database stood when it was written, its newest event and its restore generation, after
-raising the ledger's mark to that generation: a database at a lower generation, or at the same
-one with an older newest event, went back since, a restore whether the intention committed or
-not, and the restore counted moves the generation past the intention's, so it tells that restore
-once. A commit the ledger does not take as it returns, or while a call to it hangs, is
+raising the ledger's mark to that generation: a database at a lower generation, or holding fewer
+events, which are only ever appended, went back since, a restore whether the intention committed
+or not, unless the intention was written by the time the latest restore was counted, which it tells
+already. A commit the ledger does not take as it returns, or while a call to it hangs, is
 appended again before every look for a restore and at stop, and a mark it did not take is raised
 again on the next look, so a ledger down for a while tells a copy taken before as soon as it is
-back. A forgetting never depends on the mark: what
+back. A mark raised before the latest restore counted, which that count could not read, or which
+landed only after it, is what that restore left behind: the generation goes past it, counting
+nothing. A forgetting never depends on the mark: what
 a restore that goes unseen leaves is waits, which end on their own within an hour.
 
 On Workers KV, `kvForgetLedger`, a read may show a write up to a minute late, its
@@ -3410,12 +3501,19 @@ it and above it tells the restore however far the generation moved since, to thi
 it is gone, to whichever looks next. A mark raised before the latest restore counted is what that
 restore left behind and tells no other, so a higher one that shows after a count adds nothing; and
 a restore counted while the reads did not show one counted a moment before, which took the same
-number, is counted past it then, in `bounda status` too. The ledger's entries show late as well: a
-committed forgetting the reads of a start, or of a restore found while the app runs, do not show
-yet is applied by the reconciliation a minute later, counted as that restore's when written before
-it; and one written since the latest restore counted that the database lacks is a restore however
-the database stands, so neither a later forgetting of the same person nor the generation's moves
-since hide it. A start lets go of the values raised more than a minute before
+number or a lower one, is counted past it then, in `bounda status` too, leaving the database where handling the
+last restore left it; and a count of restores raised since then past the one the database holds,
+other than such a recount, tells a copy from before that count though its generation took the same
+number. The ledger's entries show late as well: a committed forgetting the reads of a
+start, or of a restore found while the app runs, do not show yet is applied by the reconciliation a
+minute later, as that restore's when written by the time it was counted, and as another when
+written after, however the database stands, so neither a later forgetting of the same person nor
+the generation's moves since hide it; an intention written before the instance started is also
+compared with where its first reconciliation found the database, so events the instance appended
+before its reads showed the intention do not hide the ones the copy lost. A declaration made before the reads show every mark raised
+before the start, that would count nothing, waits until they do: a restore counted after the copy
+was taken tells a copy of the moment the last restore was handled from a declaration made again,
+and is counted then. A start lets go of the values raised more than a minute before
 it but the highest, once it compared them and the ledger took the generation it read, and an
 instance that compared every mark does the same once a minute: a mark holds the values of the
 last few minutes however long the object runs and however often it restarts, which is all a read
@@ -3429,7 +3527,9 @@ bounda restored
 ```
 
 `app.restored()` is the same in code. It counts the restore, so running instances learn of it
-too, clears the waits, and reconciles the ledger at once when there is one. It counts each restore
+too, clears the waits, and reconciles the ledger at once when there is one. On Workers KV, made
+within a minute of the start where it would count nothing, it resolves only once the reads show
+every mark raised before the start, as above. It counts each restore
 once: it raises the ledger's mark before it counts, so a ledger that refuses fails it with nothing
 counted; one that failed after it counted is finished, not counted again, by running it again or by
 the next start. Run again while the database stands exactly where handling the last restore left
@@ -3445,12 +3545,17 @@ after the later of the two.
 
 Restore counting is tested against a model of the database, the ledger, backups taken and restored
 at any point, crashes and stops, two instances at once, a ledger down or late, and `bounda
-restored`: across thousands of interleavings, every restore that what the database, the ledger and
-the running instances hold proves is counted, once, and nothing else is. Where it counts nothing,
-the model shows a world without the restore that every look reads the same: a copy taken between an
-intention and its commit, the ledger down from the commit until the instance was gone, is a commit
-that failed; and an instance whose newest event a copy lost, while another instance counted a
-restore since it last read, cannot tell that count from one of this copy, and takes it as such.
+restored`: across tens of thousands of interleavings of up to forty steps, every restore that what
+the database, the ledger and the running instances hold proves is counted, once, and nothing else
+is. Where it counts nothing, the model shows a world without the restore that every look reads the
+same: a copy taken between an intention and its commit, the ledger down from the commit until the
+instance was gone, is a commit that failed; and an instance whose newest event a copy lost, while
+another instance counted a restore since it last read, cannot tell that count from one of this
+copy, and takes it as such. Each restore is handled once even when an instance counts one while the
+ledger cannot be read and has not read a count made a moment before, but its count then takes that
+count's number: on a ledger that keeps the highest count alone, a SQL or Durable Object one,
+`bounda status` counts one restore fewer from then on; on Workers KV, which keeps every count, it is
+counted past it once the reads show both.
 
 ### Old backups
 

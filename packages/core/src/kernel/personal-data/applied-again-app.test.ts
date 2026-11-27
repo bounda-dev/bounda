@@ -126,7 +126,12 @@ const DISCLOSURE: LedgerDisclosure = {
   recipient: "Acme Mail",
   kind: "processor",
   country: "DE",
-  transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "CH" },
+  transfer: {
+    safeguard: "standard-contractual-clauses",
+    article: "46(2)(c)",
+    regime: "CH",
+    partialAdequacy: null,
+  },
   category: "default",
 };
 

@@ -149,16 +149,49 @@ describe("the keeper", () => {
         readonly storage: CloudflareDefinition;
         readonly binding?: string;
       } & (
-        | { readonly jurisdiction?: never; readonly safeguard?: never }
         | {
-            readonly jurisdiction: DurableObjectJurisdiction;
+            readonly jurisdiction?: never;
+            readonly safeguard?: never;
+            readonly adequacyScope?: never;
+          }
+        | {
+            readonly jurisdiction: "eu";
             readonly safeguard?: StoreSafeguard;
+            readonly adequacyScope?: never;
+          }
+        | {
+            readonly jurisdiction: "us" | "fedramp" | "fedramp-high";
+            readonly safeguard: "adequacy";
+            readonly adequacyScope: "data-privacy-framework";
+          }
+        | {
+            readonly jurisdiction: "us" | "fedramp" | "fedramp-high";
+            readonly safeguard?: Exclude<StoreSafeguard, "adequacy">;
+            readonly adequacyScope?: never;
           }
       )
     >();
     expectTypeOf(
-      durableObjectTenantKeys({ storage, jurisdiction: "us", safeguard: "adequacy" }),
+      durableObjectTenantKeys({
+        storage,
+        jurisdiction: "us",
+        safeguard: "adequacy",
+        adequacyScope: "data-privacy-framework",
+      }),
     ).toEqualTypeOf<TenantKeyStoreDefinition>();
+    const unscoped = () =>
+      // @ts-expect-error the decision for the United States covers organisations on the Data Privacy Framework List alone
+      durableObjectTenantKeys({ storage, jurisdiction: "fedramp", safeguard: "adequacy" });
+    void unscoped;
+    const scopedOtherwise = () =>
+      durableObjectForgetLedger({
+        storage,
+        jurisdiction: "us",
+        safeguard: "certification",
+        // @ts-expect-error an adequacyScope goes beside adequacy alone
+        adequacyScope: "data-privacy-framework",
+      });
+    void scopedOtherwise;
     expectTypeOf(
       durableObjectForgetLedger({ storage, jurisdiction: "eu" }),
     ).toEqualTypeOf<ForgetLedgerDefinition>();

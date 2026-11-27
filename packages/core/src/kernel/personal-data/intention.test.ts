@@ -392,7 +392,12 @@ describe("the intentions of forgetting", () => {
       kind: "processor",
       country: "US",
       // Kept as given, whatever the lists say now.
-      transfer: { safeguard: "adequacy" as const, article: "45", regime: "EEA" as const },
+      transfer: {
+        safeguard: "adequacy" as const,
+        article: "45",
+        regime: "EEA" as const,
+        partialAdequacy: null,
+      },
       category: "contact",
     };
     const inEea = { ...disclosure, person: "c-2", country: "FR", transfer: null };

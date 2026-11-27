@@ -6,6 +6,7 @@ import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
+import { PARTIAL_ADEQUACY } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
@@ -304,7 +305,12 @@ describe("personalDataInventory", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         categories: ["contact"],
       },
     ]);
@@ -377,7 +383,7 @@ describe("personalDataInventory", () => {
     expect(apart.holders.find(({ name }) => name === "customer.onboarding")?.location).toBeNull();
   });
 
-  it("names the transfer of every store kept out of the storage's location, with its safeguard and regime", () => {
+  it("names the transfer of every store kept out of the storage's location, with its safeguard, regime and partial decision", () => {
     const inventory = personalDataInventory({
       registry,
       config: {
@@ -398,7 +404,8 @@ describe("personalDataInventory", () => {
             forgetLedger: {
               store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf("t"), {
                 location: "fedramp",
-                safeguard: "binding-corporate-rules",
+                safeguard: "adequacy",
+                adequacyScope: "data-privacy-framework",
               }),
             },
           },
@@ -411,7 +418,11 @@ describe("personalDataInventory", () => {
       ["customer.CustomerRegistered", "eu", null],
       ["customer.remindCustomer", "eu", null],
       ["customer.onboarding", "eu", null],
-      ["customers", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
+      [
+        "customers",
+        "ch",
+        { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
+      ],
     ]);
     expect(
       inventory.records.map(({ name, location, transfer }) => [name, location, transfer]),
@@ -426,18 +437,72 @@ describe("personalDataInventory", () => {
       [
         "master-key",
         "us",
-        { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
       ],
-      ["tenant-keys", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
+      [
+        "tenant-keys",
+        "ch",
+        { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
+      ],
       [
         "forget-ledger",
         "fedramp",
-        { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+        {
+          safeguard: "adequacy",
+          article: "45",
+          regime: "US",
+          partialAdequacy: PARTIAL_ADEQUACY.US,
+        },
       ],
       ["access-log", null, null],
       ["host-log", null, null],
     ]);
     expect(inventory.findings.filter(({ kind }) => kind === "no-location")).toEqual([]);
+  });
+
+  it("refuses a recipient whose transfer the app would refuse, naming no decision it does not rest on", () => {
+    const declaring = (recipient: object): Registry => {
+      const customer = registry.aggregates.customer as unknown as {
+        readonly recipients: Readonly<Record<string, object>>;
+      };
+      return {
+        ...registry,
+        aggregates: {
+          ...registry.aggregates,
+          customer: {
+            ...registry.aggregates.customer,
+            recipients: { mailer: { ...customer.recipients.mailer, recipient } },
+          },
+        },
+      } as unknown as Registry;
+    };
+    const mailchimp = {
+      name: "Mailchimp",
+      kind: "processor",
+      country: "US",
+      safeguard: "adequacy",
+      categories: ["contact"],
+    };
+    expect(() => personalDataInventory({ registry: declaring(mailchimp), config })).toThrow(
+      new ConfigurationError(
+        'Port customer.mailer: recipient.country US has an adequacy decision, Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: once you verified the recipient is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other, declare adequacyScope: "data-privacy-framework" beside the safeguard, or rest the transfer on another safeguard: one of "standard-contractual-clauses", "binding-corporate-rules", "code-of-conduct", "certification", "derogation"',
+      ),
+    );
+    const certified = personalDataInventory({
+      registry: declaring({ ...mailchimp, adequacyScope: "data-privacy-framework" }),
+      config,
+    });
+    expect(certified.recipients[0]?.transfer).toEqual({
+      safeguard: "adequacy",
+      article: "45",
+      regime: "US",
+      partialAdequacy: PARTIAL_ADEQUACY.US,
+    });
   });
 
   it("refuses a store kept elsewhere than a storage that declares a location, as the app does", () => {

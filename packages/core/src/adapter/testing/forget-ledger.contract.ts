@@ -191,6 +191,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
               safeguard: "standard-contractual-clauses",
               article: "46(2)(c)",
               regime: "US",
+              partialAdequacy: null,
             },
             category: "contact",
           },

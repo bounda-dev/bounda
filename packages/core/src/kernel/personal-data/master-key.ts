@@ -147,7 +147,13 @@ const wrapperOver = (current: MasterKey, older: readonly MasterKey[]): CryptoKey
  * storage that declares a `location`, the app refuses to start on a master key that declares
  * none, or one under another legal regime without a `safeguard`.
  */
-export const masterKey: MasterKeyFunction = ({ from, previous = [], location, safeguard }) =>
+export const masterKey: MasterKeyFunction = ({
+  from,
+  previous = [],
+  location,
+  safeguard,
+  adequacyScope,
+}) =>
   defineCryptoKeyWrapper(
     async ({ env }): Promise<CryptoKeyWrapper> => {
       const current = await importMasterKey(read(env, from));
@@ -156,7 +162,7 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [], location, sa
       ).filter(({ kid }) => kid !== current.kid);
       return wrapperOver(current, older);
     },
-    { location, safeguard },
+    { location, safeguard, adequacyScope },
   );
 
 export interface EphemeralMasterKeyFunction {

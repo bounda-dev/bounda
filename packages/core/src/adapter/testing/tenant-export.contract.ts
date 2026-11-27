@@ -362,7 +362,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
       expect(header).toEqual({
         format: "bounda.tenant-export",
-        version: 6,
+        version: 7,
         tenant: DEFAULT_TENANT,
         exportId: expect.any(String),
         exportedAt: "2026-03-01T00:00:00.000Z",
@@ -793,7 +793,12 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         status: "disclosed",
         declared: true,
       };

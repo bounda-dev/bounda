@@ -82,6 +82,15 @@ export const createKvTenantKeyStore: CreateKvTenantKeyStoreFunction = ({ namespa
       writing = written.catch(() => undefined);
       return written;
     },
+    remove: (tenant, expected) => {
+      const removed = writing.then(async () => {
+        if ((await read(tenant))?.revision !== expected) return false;
+        await namespace.delete(keyOf(tenant));
+        return true;
+      });
+      writing = removed.catch(() => undefined);
+      return removed;
+    },
   };
 };
 

@@ -1,4 +1,4 @@
-import type { PersonalDataInventory } from "@bounda-dev/core";
+import { PARTIAL_ADEQUACY, type PersonalDataInventory } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
 import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
 
@@ -128,7 +128,12 @@ const inventory: PersonalDataInventory = {
       stores: ["read-model"],
       database: "postgresql",
       location: "fedramp",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      transfer: {
+        safeguard: "adequacy",
+        article: "45",
+        regime: "US",
+        partialAdequacy: PARTIAL_ADEQUACY.US,
+      },
     },
   ],
   recipients: [
@@ -137,7 +142,12 @@ const inventory: PersonalDataInventory = {
       name: "Mail | Co",
       kind: "processor",
       country: "US",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      transfer: {
+        safeguard: "adequacy",
+        article: "45",
+        regime: "US",
+        partialAdequacy: PARTIAL_ADEQUACY.US,
+      },
       categories: ["contact"],
     },
     {
@@ -171,7 +181,7 @@ const inventory: PersonalDataInventory = {
       name: "tenant-keys",
       where: "tenant-keys",
       location: "ch",
-      transfer: { safeguard: "adequacy", article: "45", regime: "CH" },
+      transfer: { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
       keptFor: null,
     },
     {
@@ -269,10 +279,10 @@ describe("formatInventory", () => {
         "  read model customers, of the person in customerId",
         "    email  contact  sealed under the person's key, found by a blind index",
         "    name  default  in the clear, forgotten by the read model's projection",
-        "    kept in: read-model table (postgresql, in fedramp, transferred to US under standard-contractual-clauses (article 46(2)(c)))",
+        "    kept in: read-model table (postgresql, in fedramp, transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the provider keeping it is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other)",
         "",
         "Recipients",
-        "  customer.mailer  Mail | Co, processor in US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact",
+        "  customer.mailer  Mail | Co, processor in US, transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the recipient is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other: contact",
         "  customer.crm  CRM, joint-controller in DE: contact, default",
         "",
         "Kept by the runtime",
@@ -408,14 +418,14 @@ describe("formatInventoryMarkdown", () => {
         "| --- | --- | --- | --- | --- | --- |",
         "| process state `order.lifecycle` | `note` | default | the instance's id | sealed under the person's key | event store (cloudflare, in eu) |",
         "| command `order.remind` | (names the person only) |  | the person in customerId |  | scheduled commands, dead letters (cloudflare, in eu) |",
-        "| read model `customers` | `email` | contact | the person in customerId | sealed under the person's key, found by a blind index | read-model table (postgresql, in fedramp, transferred to US under standard-contractual-clauses (article 46(2)(c))) |",
-        "| read model `customers` | `name` | default | the person in customerId | in the clear, forgotten by the read model's projection | read-model table (postgresql, in fedramp, transferred to US under standard-contractual-clauses (article 46(2)(c))) |",
+        "| read model `customers` | `email` | contact | the person in customerId | sealed under the person's key, found by a blind index | read-model table (postgresql, in fedramp, transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the provider keeping it is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other) |",
+        "| read model `customers` | `name` | default | the person in customerId | in the clear, forgotten by the read model's projection | read-model table (postgresql, in fedramp, transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the provider keeping it is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other) |",
         "",
         "## Recipients",
         "",
         "| Port | Recipient | Kind | Country | Transfer | Categories |",
         "| --- | --- | --- | --- | --- | --- |",
-        "| `customer.mailer` | Mail \\| Co | processor | US | transferred to US under standard-contractual-clauses (article 46(2)(c)) | contact |",
+        "| `customer.mailer` | Mail \\| Co | processor | US | transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the recipient is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other | contact |",
         "| `customer.crm` | CRM | joint-controller | DE | inside the EEA | contact, default |",
         "",
         "## Kept by the runtime",

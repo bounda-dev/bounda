@@ -73,6 +73,11 @@ export interface RecipientTransfer {
   readonly safeguard: TransferSafeguard;
   readonly article: string;
   readonly regime: LegalRegime;
+  /**
+   * The decision of `PARTIAL_ADEQUACY` the transfer rests on, whose `condition` you verify of the
+   * recipient; `null` unless the safeguard is `adequacy` in a country of `PARTIAL_ADEQUACY`.
+   */
+  readonly partialAdequacy: PartialAdequacy | null;
 }
 
 /**
@@ -397,9 +402,9 @@ export const COUNTRY_CODES = [
 /**
  * The countries with an adequacy decision of the European Commission under article 45 of the GDPR,
  * as of November 2026, by their ISO 3166-1 alpha-2 code. Only these take the `adequacy` safeguard.
- * The decisions for Canada and the United States cover some organisations alone (commercial ones
- * under PIPEDA; those certified under the EU-US Data Privacy Framework): you answer for the
- * recipient or the provider being one.
+ * The decisions for Canada and the United States cover some recipients alone (`PARTIAL_ADEQUACY`),
+ * so a transfer there rests on `adequacy` only with the `adequacyScope` that says the recipient or
+ * the provider is one of them.
  */
 export const ADEQUATE_COUNTRIES = [
   "AD",
@@ -435,6 +440,78 @@ export type EeaCountry = (typeof EEA_COUNTRIES)[number];
  */
 export type AdequateCountry = (typeof ADEQUATE_COUNTRIES)[number];
 
+/**
+ * An adequacy decision that covers some recipients in its country alone, as `PARTIAL_ADEQUACY`
+ * gives each.
+ */
+export interface PartialAdequacy<Scope extends string = string> {
+  /**
+   * What a store or a recipient resting on the decision declares as its `adequacyScope`.
+   */
+  readonly scope: Scope;
+  /**
+   * The decision, as the Official Journal names it.
+   */
+  readonly decision: string;
+  /**
+   * The decision's CELEX number, by which EUR-Lex finds it.
+   */
+  readonly celex: string;
+  /**
+   * Whom the decision covers, as it says.
+   */
+  readonly covers: string;
+  /**
+   * What the recipient, or the provider that keeps a store, must be for a transfer to rest on the
+   * decision, which you verify before it does and as long as it does: outside the decision's
+   * scope, the transfer needs another safeguard.
+   */
+  readonly condition: string;
+}
+
+/**
+ * The adequacy decisions of `ADEQUATE_COUNTRIES` that cover some recipients in their country alone,
+ * by its ISO 3166-1 alpha-2 code, as of November 2026: Canada's, for recipients subject to PIPEDA,
+ * and the United States', for organisations on the Data Privacy Framework List. A transfer to one
+ * of these countries rests on `adequacy` only when it declares the decision's `scope` as its
+ * `adequacyScope`, and the record of processing and the exports name the decision's `condition`.
+ */
+export const PARTIAL_ADEQUACY: {
+  readonly CA: PartialAdequacy<"pipeda">;
+  readonly US: PartialAdequacy<"data-privacy-framework">;
+} = {
+  CA: {
+    scope: "pipeda",
+    decision: "Commission Decision 2002/2/EC",
+    celex: "32002D0002",
+    covers:
+      "recipients subject to the Personal Information Protection and Electronic Documents Act (PIPEDA)",
+    condition:
+      "subject to PIPEDA for the data, as a private-sector organisation is for personal information it collects, uses or discloses in the course of commercial activities",
+  },
+  US: {
+    scope: "data-privacy-framework",
+    decision: "Commission Implementing Decision (EU) 2023/1795",
+    celex: "32023D1795",
+    covers:
+      "organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce",
+    condition:
+      "on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other",
+  },
+};
+
+/**
+ * A country whose adequacy decision covers some recipients alone, a key of `PARTIAL_ADEQUACY`.
+ */
+export type PartiallyAdequateCountry = keyof typeof PARTIAL_ADEQUACY;
+
+/**
+ * The `adequacyScope` that a transfer to `Country`, one of `PartiallyAdequateCountry`, declares to
+ * rest on its adequacy decision; every country's scope when `Country` is left out.
+ */
+export type AdequacyScope<Country extends PartiallyAdequateCountry = PartiallyAdequateCountry> =
+  (typeof PARTIAL_ADEQUACY)[Country]["scope"];
+
 interface RecipientIdentity<Category extends string> {
   /**
    * Who receives the data, as the person is told: the provider's name, `"Mailchimp"`.
@@ -454,19 +531,49 @@ interface RecipientIdentity<Category extends string> {
 }
 
 /**
+ * The safeguard and `adequacyScope` of a transfer to a country of `PARTIAL_ADEQUACY`.
+ */
+type PartialAdequacyDeclaration = {
+  readonly [Country in PartiallyAdequateCountry]:
+    | {
+        readonly country: Country;
+        readonly safeguard: "adequacy";
+        /**
+         * The part of the country's adequacy decision the recipient falls in, its
+         * `PARTIAL_ADEQUACY` scope: declaring it says you verified the decision's `condition` of
+         * the recipient, as the record of processing and the exports then name it. Without it,
+         * the transfer rests on another safeguard.
+         */
+        readonly adequacyScope: AdequacyScope<Country>;
+      }
+    | {
+        readonly country: Country;
+        readonly safeguard: Exclude<TransferSafeguard, "adequacy">;
+        readonly adequacyScope?: never;
+      };
+}[PartiallyAdequateCountry];
+
+/**
  * What a port module exports as `recipient` when the port sends personal data out: who receives
  * it, where, and which categories. A country outside the European Economic Area takes the
- * safeguard its transfer rests on, `adequacy` only when it is one of `ADEQUATE_COUNTRIES`; one
- * inside takes none.
+ * safeguard its transfer rests on, `adequacy` only when it is one of `ADEQUATE_COUNTRIES`, and
+ * there, in a country of `PARTIAL_ADEQUACY`, only beside the `adequacyScope` that says the
+ * recipient falls in its decision; one inside takes none.
  */
 export type RecipientDeclaration<Category extends string = PersonalCategoryName> =
   RecipientIdentity<Category> &
     (
-      | { readonly country: EeaCountry; readonly safeguard?: never }
-      | { readonly country: AdequateCountry; readonly safeguard: TransferSafeguard }
+      | { readonly country: EeaCountry; readonly safeguard?: never; readonly adequacyScope?: never }
+      | {
+          readonly country: Exclude<AdequateCountry, PartiallyAdequateCountry>;
+          readonly safeguard: TransferSafeguard;
+          readonly adequacyScope?: never;
+        }
+      | PartialAdequacyDeclaration
       | {
           readonly country: Exclude<CountryCode, EeaCountry | AdequateCountry>;
           readonly safeguard: Exclude<TransferSafeguard, "adequacy">;
+          readonly adequacyScope?: never;
         }
     );
 

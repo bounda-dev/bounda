@@ -64,10 +64,10 @@ describe("the tenant export", () => {
 
   it("names its format and version as literals a reader checks", () => {
     expectTypeOf(TENANT_EXPORT_FORMAT).toEqualTypeOf<"bounda.tenant-export">();
-    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<6>();
+    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<7>();
     expectTypeOf<TenantExportHeader>().toEqualTypeOf<{
       readonly format: "bounda.tenant-export";
-      readonly version: 6;
+      readonly version: 7;
       readonly tenant: string;
       readonly exportId: string;
       readonly exportedAt: string;

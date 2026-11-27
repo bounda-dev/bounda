@@ -124,7 +124,12 @@ describe("the SQL forget ledger", () => {
       recipient: "Mailchimp",
       kind: "processor",
       country: "US",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      transfer: {
+        safeguard: "standard-contractual-clauses",
+        article: "46(2)(c)",
+        regime: "US",
+        partialAdequacy: null,
+      },
       category: "contact",
     };
     await ledger.append([

@@ -13,6 +13,7 @@ import {
 import {
   COUNTRY_CODES,
   type CountryCode,
+  type PartialAdequacy,
   type RecipientTransfer,
   TRANSFER_SAFEGUARDS,
   type TransferSafeguard,
@@ -58,7 +59,8 @@ export interface LedgerDisclosure {
   /**
    * The transfer out of the European Economic Area the disclosure rested on when it was first
    * recorded, as `PersonRecipient.transfer` named it then, `null` for a recipient in it: kept as
-   * it was, since the regime of a country and the article of a safeguard are those of that day.
+   * it was, since the regime of a country, the article of a safeguard and a partial adequacy
+   * decision are those of that day.
    */
   readonly transfer: RecipientTransfer | null;
   readonly category: string;
@@ -318,20 +320,37 @@ const isText = (value: unknown): value is string => typeof value === "string";
 const isSafeguard = (value: unknown): value is TransferSafeguard =>
   TRANSFER_SAFEGUARDS.includes(value as TransferSafeguard);
 
+const PARTIAL_ADEQUACY_FIELDS = ["scope", "decision", "celex", "covers", "condition"] as const;
+
+const partialAdequacyOf = (value: unknown): PartialAdequacy | null | undefined => {
+  if (value === null) return null;
+  if (typeof value !== "object") return undefined;
+  const [scope, decision, celex, covers, condition]: unknown[] = PARTIAL_ADEQUACY_FIELDS.map(
+    (field) => Reflect.get(value, field),
+  );
+  return isText(scope) && isText(decision) && isText(celex) && isText(covers) && isText(condition)
+    ? { scope, decision, celex, covers, condition }
+    : undefined;
+};
+
 const transferOf = (value: unknown): RecipientTransfer | null | undefined => {
   if (value === null) return null;
   if (typeof value !== "object") return undefined;
   const safeguard: unknown = Reflect.get(value, "safeguard");
   const article: unknown = Reflect.get(value, "article");
   const regime: unknown = Reflect.get(value, "regime");
-  return isSafeguard(safeguard) && isText(article) && isText(regime)
-    ? { safeguard, article, regime: regime as RecipientTransfer["regime"] }
+  const partialAdequacy = partialAdequacyOf(Reflect.get(value, "partialAdequacy"));
+  return isSafeguard(safeguard) &&
+    isText(article) &&
+    isText(regime) &&
+    partialAdequacy !== undefined
+    ? { safeguard, article, regime: regime as RecipientTransfer["regime"], partialAdequacy }
     : undefined;
 };
 
 /**
- * A disclosure a ledger stored, read back: one as `LedgerDisclosure` has it, its transfer as it
- * was kept, or one written before disclosures kept their transfer, with the `safeguard` alone,
+ * A disclosure a ledger stored, read back: one as `LedgerDisclosure` has it, its transfer and any
+ * partial adequacy decision as they were kept, or one written before disclosures kept their transfer, with the `safeguard` alone,
  * whose transfer it derives from its country and safeguard as they read now. `null` for anything
  * else, which a ledger must not read as an entry without a disclosure: that would be a forgetting
  * of the person as a whole.

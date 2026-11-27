@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DATA_AREAS, isAdequate, isDataLocation, regimeOf } from "./data-location.ts";
-import { ADEQUATE_COUNTRIES, COUNTRY_CODES, EEA_COUNTRIES } from "./recipient.ts";
+import {
+  DATA_AREAS,
+  isAdequate,
+  isDataLocation,
+  partialAdequacyOf,
+  regimeOf,
+} from "./data-location.ts";
+import { ADEQUATE_COUNTRIES, COUNTRY_CODES, EEA_COUNTRIES, PARTIAL_ADEQUACY } from "./recipient.ts";
 
 describe("isDataLocation", () => {
   it("knows every country in lower case and every area", () => {
@@ -71,5 +77,33 @@ describe("isAdequate", () => {
   it("names no country of the European Economic Area as adequate, which needs no decision", () => {
     const eea: ReadonlySet<string> = new Set(EEA_COUNTRIES);
     expect(ADEQUATE_COUNTRIES.filter((country) => eea.has(country))).toEqual([]);
+  });
+});
+
+describe("partialAdequacyOf", () => {
+  it("names the partial decision of Canada and of the United States, wherever their regime is", () => {
+    expect(partialAdequacyOf("CA")).toBe(PARTIAL_ADEQUACY.CA);
+    expect(partialAdequacyOf(regimeOf("ca"))).toBe(PARTIAL_ADEQUACY.CA);
+    for (const location of ["us", "fedramp", "fedramp-high"] as const) {
+      expect(partialAdequacyOf(regimeOf(location)), location).toBe(PARTIAL_ADEQUACY.US);
+    }
+  });
+
+  it("answers null under a regime adequate as a whole, the European Economic Area, any other and anywhere", () => {
+    for (const regime of ["CH", "GB", "JP", "EEA", "IN", "anywhere"] as const) {
+      expect(partialAdequacyOf(regime), regime).toBeNull();
+    }
+  });
+
+  it("holds partial decisions of adequate countries alone, each with a scope of its own", () => {
+    const adequate: ReadonlySet<string> = new Set(ADEQUATE_COUNTRIES);
+    const partial = Object.entries(PARTIAL_ADEQUACY);
+    expect(partial.filter(([country]) => !adequate.has(country))).toEqual([]);
+    const scopes = partial.map(([, { scope }]) => scope);
+    expect(new Set(scopes).size).toBe(scopes.length);
+    for (const [, { celex, decision }] of partial) {
+      const [, year, number] = /^3(\d{4})D(\d{4})$/.exec(celex) ?? [];
+      expect(decision, celex).toContain(`${year}/${Number(number)}`);
+    }
   });
 });

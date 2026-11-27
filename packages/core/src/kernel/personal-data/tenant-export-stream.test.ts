@@ -323,7 +323,7 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 6,
+        version: 7,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
@@ -1028,7 +1028,12 @@ describe("streamTenantExport", () => {
     const kinds = parts.map(({ kind }) => kind);
     expect(kinds.lastIndexOf("person")).toBeLessThan(kinds.indexOf("recipient"));
     expect(kinds.lastIndexOf("recipient")).toBeLessThan(kinds.indexOf("event"));
-    const scc = { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" };
+    const scc = {
+      safeguard: "standard-contractual-clauses",
+      article: "46(2)(c)",
+      regime: "US",
+      partialAdequacy: null,
+    };
     const of = (...names: string[]) =>
       names.map((name) => ({
         name,
@@ -1041,7 +1046,12 @@ describe("streamTenantExport", () => {
           name: "HubSpot",
           kind: "processor",
           country: "US",
-          transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+          transfer: {
+            safeguard: "binding-corporate-rules",
+            article: "47",
+            regime: "US",
+            partialAdequacy: null,
+          },
           status: "presumed",
           categories: of("default"),
           firstDisclosedAt: null,
@@ -1080,7 +1090,7 @@ describe("streamTenantExport", () => {
           name: "Postmark",
           kind: "processor",
           country: "CH",
-          transfer: { safeguard: "adequacy", article: "45", regime: "CH" },
+          transfer: { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
           status: "declared",
           categories: of("invoices"),
           firstDisclosedAt: null,
@@ -1116,6 +1126,7 @@ describe("streamTenantExport", () => {
         safeguard: "adequacy",
         article: "45",
         regime: "CH",
+        partialAdequacy: null,
       },
     ];
     expect((await stream({ transfers })).header.transfers).toEqual(transfers);
@@ -1155,7 +1166,7 @@ describe("streamTenantExport", () => {
         recipient: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "adequacy", article: "45", regime: "EEA" },
+        transfer: { safeguard: "adequacy", article: "45", regime: "EEA", partialAdequacy: null },
         category: "contact",
       },
     };
@@ -1293,7 +1304,7 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 6,
+      version: 7,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",

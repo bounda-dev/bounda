@@ -831,6 +831,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         safeguard: "standard-contractual-clauses",
         article: "46(2)(c)",
         regime: "US",
+        partialAdequacy: null,
       } as const;
       const legacy = JSON.stringify({
         ...identity,

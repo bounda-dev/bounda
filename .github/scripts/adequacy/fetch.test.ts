@@ -40,6 +40,20 @@ describe("fetchPage", () => {
     expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("asks for the media type it is given", async () => {
+    const { calls, fetch } = answering(new Response("{}"));
+    const answer = fetchPage({
+      url,
+      accept: "application/sparql-results+json",
+      fetch,
+      wait: async () => {},
+      attempts: 1,
+      timeoutMs: 1_000,
+    });
+    await expect(answer).resolves.toBe("{}");
+    expect(calls[0]?.headers).toEqual({ accept: "application/sparql-results+json" });
+  });
+
   it("tries again, waiting longer each time, after a network or a server error", async () => {
     const { fetch } = answering(
       new TypeError("fetch failed"),

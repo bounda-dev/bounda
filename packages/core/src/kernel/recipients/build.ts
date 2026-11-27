@@ -4,6 +4,8 @@ import {
   COUNTRY_CODES,
   type CountryCode,
   EEA_COUNTRIES,
+  PARTIAL_ADEQUACY,
+  type PartialAdequacy,
   RECIPIENT_HANDLERS,
   RECIPIENT_KINDS,
   type RecipientHandlerName,
@@ -71,6 +73,7 @@ export interface BuildRecipientsFunction {
 const COUNTRIES: ReadonlySet<unknown> = new Set(COUNTRY_CODES);
 const EEA: ReadonlySet<string> = new Set(EEA_COUNTRIES);
 const ADEQUATE: ReadonlySet<string> = new Set(ADEQUATE_COUNTRIES);
+const PARTIAL: ReadonlyMap<unknown, PartialAdequacy> = new Map(Object.entries(PARTIAL_ADEQUACY));
 const PORT_KEY = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -78,6 +81,49 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const listed = (values: readonly string[]): string =>
   values.map((value) => JSON.stringify(value)).join(", ");
+
+export interface CheckRecipientTransferFunction {
+  (port: string, recipient: Readonly<Record<string, unknown>>): void;
+}
+
+// Where the recipient is and what its transfer rests on, as the app checks it at boot and the
+// record of processing before it names the transfer.
+export const checkRecipientTransfer: CheckRecipientTransferFunction = (port, recipient) => {
+  const fail = (message: string): never => {
+    throw new ConfigurationError(`Port ${port}: ${message}`);
+  };
+  const { country, safeguard, adequacyScope } = recipient;
+  if (!COUNTRIES.has(country)) {
+    fail(`recipient.country ${JSON.stringify(country)} is not an ISO 3166-1 alpha-2 code`);
+  }
+  const inEea = EEA.has(country as string);
+  if (inEea && safeguard !== undefined) {
+    fail(`recipient.country ${country} is in the European Economic Area, so it takes no safeguard`);
+  }
+  if (!inEea && !TRANSFER_SAFEGUARDS.includes(safeguard as TransferSafeguard)) {
+    fail(
+      `recipient.country ${country} is outside the European Economic Area, so recipient.safeguard names what the transfer rests on: one of ${listed(TRANSFER_SAFEGUARDS)}`,
+    );
+  }
+  if (safeguard === "adequacy" && !ADEQUATE.has(country as string)) {
+    fail(
+      `recipient.country ${country} has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
+    );
+  }
+  const partial = PARTIAL.get(country);
+  if (safeguard === "adequacy" && partial !== undefined && adequacyScope !== partial.scope) {
+    fail(
+      `recipient.country ${country} has an adequacy decision, ${partial.decision}, for ${partial.covers} alone${adequacyScope === undefined ? "" : `, and recipient.adequacyScope ${JSON.stringify(adequacyScope)} is not its scope`}: once you verified the recipient is ${partial.condition}, declare adequacyScope: ${JSON.stringify(partial.scope)} beside the safeguard, or rest the transfer on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
+    );
+  }
+  if (adequacyScope !== undefined && (safeguard !== "adequacy" || partial === undefined)) {
+    fail(
+      safeguard === "adequacy"
+        ? `recipient.adequacyScope ${JSON.stringify(adequacyScope)} names part of a partial adequacy decision, and the decision for ${country} covers every recipient there: remove it`
+        : `recipient.adequacyScope ${JSON.stringify(adequacyScope)} names part of a partial adequacy decision, so it goes beside safeguard: "adequacy" alone: remove it`,
+    );
+  }
+};
 
 const checked = (
   port: string,
@@ -97,23 +143,8 @@ const checked = (
   if (!RECIPIENT_KINDS.includes(kind as RecipientKind)) {
     fail(`recipient.kind ${JSON.stringify(kind)} is none of ${listed(RECIPIENT_KINDS)}`);
   }
-  if (!COUNTRIES.has(country)) {
-    fail(`recipient.country ${JSON.stringify(country)} is not an ISO 3166-1 alpha-2 code`);
-  }
+  checkRecipientTransfer(port, recipient);
   const inEea = EEA.has(country as string);
-  if (inEea && safeguard !== undefined) {
-    fail(`recipient.country ${country} is in the European Economic Area, so it takes no safeguard`);
-  }
-  if (!inEea && !TRANSFER_SAFEGUARDS.includes(safeguard as TransferSafeguard)) {
-    fail(
-      `recipient.country ${country} is outside the European Economic Area, so recipient.safeguard names what the transfer rests on: one of ${listed(TRANSFER_SAFEGUARDS)}`,
-    );
-  }
-  if (safeguard === "adequacy" && !ADEQUATE.has(country as string)) {
-    fail(
-      `recipient.country ${country} has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
-    );
-  }
   const named = recipient.categories;
   if (!Array.isArray(named) || named.length === 0) {
     fail("recipient.categories must list the categories of personal data the port sends it");
@@ -161,7 +192,8 @@ const checked = (
 /**
  * Checks every recipient the registry declares. Throws `ConfigurationError` for a declaration
  * without a name, a kind, an ISO country, the safeguard a country outside the European Economic
- * Area takes, or categories the app has; for a handler missing; for a port that declares one and
+ * Area takes, the `adequacyScope` a partial adequacy decision takes and only it, or categories the
+ * app has; for a handler missing; for a port that declares one and
  * has no implementation; and for a former key that is a port now or that two ports claim.
  */
 export const buildRecipients: BuildRecipientsFunction = ({ registry, categories, ports }) => {

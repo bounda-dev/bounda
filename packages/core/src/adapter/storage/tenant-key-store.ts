@@ -103,6 +103,11 @@ export interface TenantKeyStore {
   get(tenant: string): Promise<VersionedTenantKeyRecord | null>;
   put(tenant: string, record: TenantKeyRecord, expected: number | null): Promise<boolean>;
   /**
+   * Removes the tenant's record only while it is still at `expected`, and reports whether it did:
+   * what removing a copy left in a store the tenant's configuration no longer names goes through.
+   */
+  remove(tenant: string, expected: number): Promise<boolean>;
+  /**
    * A page of the tenants it holds a record of, from `cursor` (`null` for the first page), about
    * `limit` of them: what a rotation of the master key goes through.
    */

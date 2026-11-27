@@ -30,7 +30,7 @@ export const TENANT_EXPORT_FORMAT: "bounda.tenant-export" = "bounda.tenant-expor
  * The version of the format a tenant export is written in. A version that changes what a part
  * holds, or adds a kind of part, is a new one.
  */
-export const TENANT_EXPORT_VERSION: 6 = 6;
+export const TENANT_EXPORT_VERSION: 7 = 7;
 
 /**
  * A category of the app as `app/personal-data.ts` declares it, as `ExportedCategory` tells a

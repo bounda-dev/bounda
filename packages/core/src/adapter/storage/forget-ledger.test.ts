@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PARTIAL_ADEQUACY } from "../../modules/recipient.ts";
 import { forgottenReasonOf, ledgerDisclosureOf } from "./forget-ledger.ts";
 
 describe("forgottenReasonOf", () => {
@@ -23,11 +24,25 @@ describe("ledgerDisclosureOf", () => {
     safeguard: "standard-contractual-clauses",
     article: "46(2)(c)",
     regime: "US",
+    partialAdequacy: null,
   } as const;
 
   it("reads a disclosure with its transfer as it was kept, whatever the lists say now", () => {
     const kept = { ...identity, transfer: { ...transfer, regime: "EEA" }, category: "contact" };
     expect(ledgerDisclosureOf({ ...kept, extra: 1 })).toEqual(kept);
+    // A partial decision as it was kept, though a later one would read otherwise.
+    const decision = { ...PARTIAL_ADEQUACY.US, condition: "as kept" };
+    const partial = {
+      ...identity,
+      transfer: { safeguard: "adequacy", article: "45", regime: "US", partialAdequacy: decision },
+      category: "contact",
+    };
+    expect(
+      ledgerDisclosureOf({
+        ...partial,
+        transfer: { ...partial.transfer, partialAdequacy: { ...decision, extra: 1 } },
+      }),
+    ).toEqual(partial);
     expect(
       ledgerDisclosureOf({ ...identity, country: "FR", transfer: null, category: "c" }),
     ).toEqual({ ...identity, country: "FR", transfer: null, category: "c" });
@@ -41,6 +56,18 @@ describe("ledgerDisclosureOf", () => {
         category: "contact",
       }),
     ).toEqual({ ...identity, transfer, category: "contact" });
+    expect(ledgerDisclosureOf({ ...identity, safeguard: "adequacy", category: "contact" })).toEqual(
+      {
+        ...identity,
+        transfer: {
+          safeguard: "adequacy",
+          article: "45",
+          regime: "US",
+          partialAdequacy: PARTIAL_ADEQUACY.US,
+        },
+        category: "contact",
+      },
+    );
     expect(
       ledgerDisclosureOf({
         ...identity,
@@ -51,7 +78,7 @@ describe("ledgerDisclosureOf", () => {
     ).toEqual({
       ...identity,
       country: "CH",
-      transfer: { safeguard: "adequacy", article: "45", regime: "CH" },
+      transfer: { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
       category: "contact",
     });
     for (const safeguard of [null, undefined]) {
@@ -80,6 +107,12 @@ describe("ledgerDisclosureOf", () => {
       { ...transfer, safeguard: "trust" },
       { ...transfer, article: 46 },
       { ...transfer, regime: null },
+      { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      { ...transfer, partialAdequacy: "dpf" },
+      ...["scope", "decision", "celex", "covers", "condition"].map((field) => ({
+        ...transfer,
+        partialAdequacy: { ...PARTIAL_ADEQUACY.US, [field]: 1 },
+      })),
     ]) {
       expect(ledgerDisclosureOf({ ...whole, transfer: kept })).toBeNull();
     }

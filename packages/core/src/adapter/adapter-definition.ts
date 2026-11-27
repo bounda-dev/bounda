@@ -1,6 +1,11 @@
 import type { Config } from "../config/types.ts";
-import type { AdequateLocation, DataLocation } from "../modules/data-location.ts";
-import type { StoreSafeguard } from "../modules/recipient.ts";
+import type {
+  AdequacyScopeOf,
+  AdequateLocation,
+  DataLocation,
+  PartiallyAdequateLocation,
+} from "../modules/data-location.ts";
+import type { AdequacyScope, StoreSafeguard } from "../modules/recipient.ts";
 
 /**
  * What `bounda.config.ts` holds under `storage` and `readModels`: an adapter's name and options.
@@ -25,6 +30,11 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
    */
   readonly safeguard?: StoreSafeguard;
   /**
+   * The part of a partial adequacy decision (`PARTIAL_ADEQUACY`) the provider keeping the data
+   * falls in, as its `adequacyScope` option declares it beside the `adequacy` safeguard.
+   */
+  readonly adequacyScope?: AdequacyScope;
+  /**
    * Refuses, with `ConfigurationError`, a configuration this adapter cannot serve, such as a read
    * model kept apart from where the adapter says the data lives. Run every time a configuration
    * is resolved, for `storage` and each of `readModels`: an app refuses to start on it, and so does
@@ -34,9 +44,9 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
 }
 
 /**
- * The `location` and `safeguard` options every adapter, `masterKey`, `defineKeyWrapper`,
- * `defineTenantKeyStore` and `defineForgetLedger` take: where the data, or the key, is kept, and
- * what allows keeping it there when that is not where `storage` keeps the app's.
+ * The `location`, `safeguard` and `adequacyScope` options every adapter, `masterKey`,
+ * `defineKeyWrapper`, `defineTenantKeyStore` and `defineForgetLedger` take: where the data, or the
+ * key, is kept, and what allows keeping it there when that is not where `storage` keeps the app's.
  */
 export type DataLocationOptions =
   | {
@@ -51,31 +61,59 @@ export type DataLocationOptions =
        */
       readonly location?: DataLocation;
       readonly safeguard?: never;
+      readonly adequacyScope?: never;
     }
   | {
-      readonly location: AdequateLocation;
+      readonly location: Exclude<AdequateLocation, PartiallyAdequateLocation>;
       /**
        * What allows keeping it in `location`, under another legal regime than `storage`'s, under
        * articles 45 to 47 of the GDPR. The record of processing and each person's export tell of
        * the transfer and its safeguard. The app refuses to start on one declared where keeping the
        * data is no transfer, as in `"de"` under a `storage` in `"eu"`, on `storage` itself, under a
-       * `storage` that declares no location, and on `adequacy` for a location no adequacy decision
-       * covers.
+       * `storage` that declares no location, on `adequacy` for a location no adequacy decision
+       * covers, and on `adequacy` without its `adequacyScope` where a decision covers some
+       * providers alone.
        */
       readonly safeguard: StoreSafeguard;
+      readonly adequacyScope?: never;
     }
+  | PartialAdequacyOptions
   | {
       readonly location: Exclude<DataLocation, AdequateLocation>;
       readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+      readonly adequacyScope?: never;
     };
 
+// The safeguard and `adequacyScope` of a store kept in a location of `PartiallyAdequateLocation`.
+type PartialAdequacyOptions = {
+  readonly [Location in PartiallyAdequateLocation]:
+    | {
+        readonly location: Location;
+        readonly safeguard: "adequacy";
+        /**
+         * The part of the location's adequacy decision the provider keeping the data falls in, its
+         * `PARTIAL_ADEQUACY` scope, such as `"data-privacy-framework"` for one on the Data Privacy
+         * Framework List: declaring it says you verified the decision's `condition` of the
+         * provider, as the record of processing and each person's export then name it. Without
+         * it, keeping the data there rests on another safeguard.
+         */
+        readonly adequacyScope: AdequacyScopeOf<Location>;
+      }
+    | {
+        readonly location: Location;
+        readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+        readonly adequacyScope?: never;
+      };
+}[PartiallyAdequateLocation];
+
 /**
- * Where an adapter's or a store's definition says it keeps its data, and the safeguard that allows
- * keeping it there, as `AdapterDefinition` carries them.
+ * Where an adapter's or a store's definition says it keeps its data, the safeguard that allows
+ * keeping it there, and its `adequacyScope`, as `AdapterDefinition` carries them.
  */
 export interface Placement {
   readonly location?: DataLocation;
   readonly safeguard?: StoreSafeguard;
+  readonly adequacyScope?: AdequacyScope;
 }
 
 /**
@@ -85,16 +123,19 @@ export interface PlacementOfFunction {
   (options: {
     readonly location?: DataLocation | undefined;
     readonly safeguard?: StoreSafeguard | undefined;
+    readonly adequacyScope?: AdequacyScope | undefined;
   }): Placement;
 }
 
 /**
- * The `location` and `safeguard` of an adapter's or a store's options, as its definition carries
- * them, each left out when not declared: what an adapter of your own spreads into what it returns.
+ * The `location`, `safeguard` and `adequacyScope` of an adapter's or a store's options, as its
+ * definition carries them, each left out when not declared: what an adapter of your own spreads
+ * into what it returns.
  */
-export const placementOf: PlacementOfFunction = ({ location, safeguard }) => ({
+export const placementOf: PlacementOfFunction = ({ location, safeguard, adequacyScope }) => ({
   ...(location === undefined ? {} : { location }),
   ...(safeguard === undefined ? {} : { safeguard }),
+  ...(adequacyScope === undefined ? {} : { adequacyScope }),
 });
 
 export interface IsAdapterDefinitionFunction {

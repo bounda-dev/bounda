@@ -266,6 +266,14 @@ export const createSqlTenantKeyStore: CreateSqlTenantKeyStoreFunction = ({
             );
       return written.length === 1;
     },
+    remove: async (tenant, expected) => {
+      await schema();
+      const removed = await db.all(
+        `DELETE FROM ${table} WHERE "tenant" = ${p(1)} AND "revision" = ${p(2)} RETURNING "tenant"`,
+        [tenant, expected],
+      );
+      return removed.length === 1;
+    },
     close,
   };
 };

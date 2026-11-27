@@ -35,6 +35,8 @@ export interface ReachedKeyStore {
   readonly source: TenantKeySource;
   // The storage of the configuration it was read through, which opening it checks it against.
   readonly storage: AdapterDefinition;
+  // The tenant whose configuration it was read through.
+  readonly namedBy: string;
   readonly tenants: readonly string[];
 }
 
@@ -73,6 +75,16 @@ export interface ReachedTenants {
 export interface ReachTenantsFunction {
   (args: ReachTenantsArgs): Promise<ReachedTenants>;
 }
+
+export interface TenantKeySourceOfFunction {
+  (config: ResolvedConfig): TenantKeySource | null;
+}
+
+// The tenant key store a configuration names, its storage's own for `memory()`.
+export const tenantKeySourceOf: TenantKeySourceOfFunction = ({ storage, runtime }) =>
+  isAdapter(storage)
+    ? keySourcesOf({ storage, personalData: runtime.personalData }).tenantKeys
+    : runtime.personalData.tenantKeys;
 
 const firstRead = (read: Set<unknown>, source: ForgetLedgerSource | TenantKeySource): boolean => {
   const store = storeOf(source);
@@ -129,10 +141,9 @@ export const reachTenants: ReachTenantsFunction = async ({
       await ledger.close?.();
     }
   };
-  const readTenantKeys = async ({ storage, runtime }: ResolvedConfig): Promise<void> => {
-    const source = isAdapter(storage)
-      ? keySourcesOf({ storage, personalData: runtime.personalData }).tenantKeys
-      : runtime.personalData.tenantKeys;
+  const readTenantKeys = async (namedBy: string, resolved: ResolvedConfig): Promise<void> => {
+    const { storage } = resolved;
+    const source = tenantKeySourceOf(resolved);
     if (source === null || !firstRead(keysRead, source)) return;
     const store = await openTenantKeyStore({ source, storage, env });
     const listed: string[] = [];
@@ -149,12 +160,12 @@ export const reachTenants: ReachTenantsFunction = async ({
     } finally {
       await store.close?.();
     }
-    keyStores.push({ source, storage, tenants: listed });
+    keyStores.push({ source, storage, namedBy, tenants: listed });
   };
   const visit = async (tenant: string, tenantConfig: Config, ledgerRead = false) => {
     const resolved = resolveConfig(tenantConfig);
     configs.set(tenant, resolved);
-    await readTenantKeys(resolved);
+    await readTenantKeys(tenant, resolved);
     const { forgetLedger } = resolved.runtime.personalData;
     if (forgetLedger === null || ledgerRead) return;
     const { store: source } = forgetLedger;

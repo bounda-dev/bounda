@@ -26,6 +26,7 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
 | `maxConnections` | `10` | Size of the connection pool |
 | `location` | | Where the server keeps its data, a country in lower case such as `"de"` or an area such as `"eu"`. See [data location](/reference/configuration/#data-location) |
 | `safeguard` | | What allows keeping the data in `location`, under another legal regime than `storage`'s, such as `"standard-contractual-clauses"`, for a read model or store kept apart. See [stores in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction) |
+| `adequacyScope` | | Beside `safeguard: "adequacy"` in Canada or the United States, whose adequacy decisions cover some providers alone: `"pipeda"` or `"data-privacy-framework"`, saying the provider is in the decision's scope. See [partial adequacy decisions](/reference/configuration/#partial-adequacy-decisions) |
 
 ## How it stores things
 

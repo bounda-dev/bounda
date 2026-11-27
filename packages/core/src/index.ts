@@ -208,6 +208,23 @@ export {
   readTenantExport,
   tenantExportJsonLines,
 } from "./kernel/personal-data/tenant-export-json.ts";
+export type {
+  AppProject,
+  FailedTenantKey,
+  InspectTenantKeysFunction,
+  NamedTenantKeys,
+  RefusedStaleTenantKey,
+  RemovedStaleTenantKeys,
+  RemoveStaleTenantKeysArgs,
+  RemoveStaleTenantKeysFunction,
+  StaleTenantKey,
+  TenantKeyStoresArgs,
+  TenantKeysInspection,
+} from "./kernel/personal-data/tenant-key-stores.ts";
+export {
+  inspectTenantKeys,
+  removeStaleTenantKeys,
+} from "./kernel/personal-data/tenant-key-stores.ts";
 export type { TenantKeyStatus } from "./kernel/personal-data/tenant-keys.ts";
 export { DEFAULT_TENANT } from "./kernel/personal-data/tenant-keys.ts";
 export type { UnreachedTenant } from "./kernel/personal-data/tenant-reach.ts";

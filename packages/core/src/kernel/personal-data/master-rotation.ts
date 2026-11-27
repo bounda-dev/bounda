@@ -27,17 +27,23 @@ const PAGE = 500;
 // How many times a rewrap that lost the race to another writer reads the record again.
 const PUT_ATTEMPTS = 5;
 
+export interface WrappingMastersFunction {
+  (record: VersionedTenantKeyRecord): readonly string[];
+}
+
 // The master keys a version of the tenant's key, or, once forgotten, a key of its files kept until
 // its recipients are told, is wrapped under.
-const wrappingMasters = (record: VersionedTenantKeyRecord): readonly string[] =>
+export const wrappingMasters: WrappingMastersFunction = (record) =>
   (record.forgotten === null ? record.keys : (record.forgotten.files ?? [])).map(
     ({ wrappedBy }) => wrappedBy,
   );
 
-const underPrevious = (
-  record: VersionedTenantKeyRecord,
-  master: Pick<CryptoKeyWrapper, "kid">,
-): boolean => wrappingMasters(record).some((wrappedBy) => wrappedBy !== master.kid);
+export interface UnderPreviousFunction {
+  (record: VersionedTenantKeyRecord, master: Pick<CryptoKeyWrapper, "kid">): boolean;
+}
+
+export const underPrevious: UnderPreviousFunction = (record, master) =>
+  wrappingMasters(record).some((wrappedBy) => wrappedBy !== master.kid);
 
 export interface TenantsUnderPreviousMasterArgs {
   readonly store: TenantKeyStore;
@@ -268,10 +274,14 @@ export interface RewrapTenantKeysFunction {
 const ONE_WRITER =
   "The tenant key store is written by each tenant's own writer alone, as KV is: rewrap each tenant there, as createWorker's scheduled does on Cloudflare";
 
+export interface MastersInFunction {
+  (env: AppEnv): (definition: KeyWrapperDefinition) => Promise<CryptoKeyWrapper>;
+}
+
 // The master key in force for each key wrapper definition, built once.
-const mastersIn = (env: AppEnv) => {
+export const mastersIn: MastersInFunction = (env) => {
   const built = new Map<KeyWrapperDefinition, Promise<CryptoKeyWrapper>>();
-  return (definition: KeyWrapperDefinition): Promise<CryptoKeyWrapper> => {
+  return (definition) => {
     const known = built.get(definition);
     if (known !== undefined) return known;
     const building = buildKeyWrapper({ definition, env });

@@ -1,4 +1,4 @@
-import type { AppStatus, SubscriberFailure } from "@bounda-dev/core";
+import { type AppStatus, PARTIAL_ADEQUACY, type SubscriberFailure } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
 import { formatRestored, formatSchema, formatStatus } from "./status-output.ts";
 
@@ -96,7 +96,12 @@ const status: AppStatus = {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "adequacy",
+          article: "45",
+          regime: "US",
+          partialAdequacy: PARTIAL_ADEQUACY.US,
+        },
         categories: ["contact"],
       },
       persons: 3,
@@ -148,7 +153,7 @@ describe("formatStatus", () => {
       "recipients",
       "  customer.crm  Brevo, third-party, FR: contact, invoices; 1 person disclosed to it",
       "    being told what was recorded before it was declared",
-      "  customer.mailer  Mailchimp, processor, US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact; 3 persons disclosed to it",
+      "  customer.mailer  Mailchimp, processor, US, transferred to US under adequacy (article 45), on Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: verify the recipient is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other: contact; 3 persons disclosed to it",
       "    2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer",
       "  order.sms  no longer declared, 4 persons disclosed to it",
       "    1 notice failed: bounda dead-letters list --kind recipient --handler order.sms",

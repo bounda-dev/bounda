@@ -14,7 +14,7 @@ import { type LogFields, type Logger, silentLogger } from "../../contracts/logge
 import { memory } from "../../memory/index.ts";
 import { NO_RECIPIENTS } from "../recipients/build.ts";
 import { disclosureOfLedger } from "../recipients/transfer.ts";
-import { RESTORE_COVERED, RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
+import { RESTORE_COVERED, RESTORE_GENERATION } from "../shared/restores.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
@@ -27,7 +27,6 @@ import {
   FORGET_LEDGER_GRACE_MS,
   FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_LAST_RUN,
-  FORGET_LEDGER_RECONCILED,
   FORGET_LEDGER_REREAD_MS,
   type ForgetAgainEntry,
   forgetAgain,
@@ -309,15 +308,17 @@ describe("the forget ledger's reconciliation", () => {
     );
   });
 
-  it("tells, on a ledger whose reads lag, a committed entry it applies again as undone only when written since the latest restore counted", async () => {
-    for (const [covered, undone] of [
-      [Date.parse(at(1)), 1],
-      [Date.parse(at(1)) + 1, 0],
+  it("tells a committed entry it applies again as undone only when written after the latest restore counted, whether the ledger's reads lag or not", async () => {
+    for (const [delay, covered, undone] of [
+      [1, Date.parse(at(1)) - 1, 1],
+      [1, Date.parse(at(1)), 0],
+      [undefined, Date.parse(at(1)) - 1, 1],
+      [undefined, Date.parse(at(1)), 0],
     ] as const) {
       const { reconciliation, storage } = await setUp({
         entries: [entry("c-1", "e-1", at(1))],
         persons: ["c-1"],
-        visibilityDelayMs: 1,
+        ...(delay === undefined ? {} : { visibilityDelayMs: delay }),
       });
       await storage.checkpointStore.set(RESTORE_COVERED, covered);
       expect(await reconciliation.reconcile(NOW)).toBe(1);
@@ -916,46 +917,46 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.undone()).toBe(0);
   });
 
-  it("tells a committed entry the database lacks, once an earlier entry forgot its person again, as undone, unless a restore counted since was not reconciled", async () => {
-    for (const [reconciled, undone] of [
-      [1, 1],
-      [0, 0],
+  it("tells a committed entry the database lacks, once an earlier entry forgot its person again, as undone when written after the latest restore counted", async () => {
+    for (const [covered, undone] of [
+      [Date.parse(at(1)) - 1, 1],
+      [Date.parse(at(1)), 0],
     ] as const) {
       const entries: ForgetLedgerEntry[] = [
         intended("c-1", "e-0", at(0)),
         { ...entry("c-1", "e-1", at(1)), fingerprints: [] },
       ];
       const { reconciliation, storage } = await setUp({ entries, persons: ["c-1"] });
-      await storage.checkpointStore.set(RESTORES_FOUND, 1);
-      await storage.checkpointStore.set(FORGET_LEDGER_RECONCILED, reconciled);
+      await storage.checkpointStore.set(RESTORE_COVERED, covered);
       expect(await reconciliation.reconcile(NOW)).toBe(1);
       expect(reconciliation.undone()).toBe(undone);
-      expect(await storage.checkpointStore.get(FORGET_LEDGER_RECONCILED)).toBe(1);
     }
   });
 
-  it("tells a committed entry the database lacks and nobody it holds, written where the database stands, as undone, and none written before a generation since", async () => {
-    for (const [written, undone] of [
-      [3, 1],
-      [2, 0],
+  it("tells an entry written where the database had gone further than it stands as undone, unless written by the time the latest restore was counted", async () => {
+    for (const [covered, undone] of [
+      [Date.parse(at(0)) - 1, 1],
+      [Date.parse(at(0)), 0],
     ] as const) {
       const entries: ForgetLedgerEntry[] = [
-        { ...entry("c-1", "e-1", at(0)), reached: { position: 0, generation: written } },
+        { ...intended("c-1", "e-1", at(0)), reached: { position: 0, generation: 4 } },
       ];
       const { reconciliation, storage } = await setUp({ entries });
       await storage.checkpointStore.set(RESTORE_GENERATION, 3);
+      await storage.checkpointStore.set(RESTORE_COVERED, covered);
       expect(await reconciliation.reconcile(NOW)).toBe(0);
       expect(reconciliation.undone()).toBe(undone);
-      expect(reconciliation.past()).toBe(undone === 1 ? 3 : 0);
+      expect(reconciliation.past()).toBe(undone === 1 ? 4 : 0);
     }
   });
 
-  it("tells, on a ledger whose reads lag, a committed entry the database lacks and nobody it holds, written since the latest restore counted, as undone, however the generation moved", async () => {
+  it("tells a committed entry the database lacks and nobody it holds as undone when written after the latest restore counted, however the generation moved, whether the ledger's reads lag or not", async () => {
     for (const [delay, covered, undone] of [
-      [1_000, Date.parse(at(1)), 1],
-      [1_000, Date.parse(at(1)) + 1, 0],
-      [undefined, 0, 0],
-      [0, 0, 0],
+      [1_000, Date.parse(at(1)) - 1, 1],
+      [1_000, Date.parse(at(1)), 0],
+      [undefined, Date.parse(at(1)) - 1, 1],
+      [undefined, Date.parse(at(1)), 0],
+      [undefined, 0, 1],
     ] as const) {
       const entries: ForgetLedgerEntry[] = [
         { ...entry("c-1", "e-1", at(1)), reached: { position: 0, generation: 2 } },
@@ -1021,10 +1022,10 @@ describe("what the reconciliation commits again", () => {
     await threeEvents(storage);
     expect(await reconciliation.reconcile(NOW)).toBe(1);
     expect(reconciliation.undone()).toBe(1);
-    // Declared, the restore moves the generation past the mark: the entries read again tell
-    // nothing more.
+    // Declared, the restore is counted after both were written: read again, they tell nothing more.
     reconciliation.declared(1);
     await storage.checkpointStore.set(RESTORE_GENERATION, 1);
+    await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(1)));
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
   });
@@ -1042,8 +1043,38 @@ describe("what the reconciliation commits again", () => {
     const { reconciliation, storage } = await setUp({ entries });
     await threeEvents(storage);
     await storage.checkpointStore.set(RESTORE_GENERATION, moved);
+    // A restore counted moves the generation, and keeps the time it was counted at.
+    if (moved > 0) await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(0)));
     await reconciliation.reconcile(NOW);
     expect(reconciliation.undone()).toBe(undone);
+  });
+
+  it("tells a database holding fewer events than where an entry was written after the latest restore counted as gone back, however far its generation moved", async () => {
+    const entries: ForgetLedgerEntry[] = [
+      { ...entry("c-1", "e-1", at(1)), committed: false, reached: { position: 9, generation: 0 } },
+    ];
+    const { reconciliation, storage } = await setUp({ entries });
+    await threeEvents(storage);
+    await storage.checkpointStore.set(RESTORE_GENERATION, 4);
+    await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(0)));
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(1);
+  });
+
+  it("tells an entry written before the instance started, read only later, from where its first reconciliation found the database, though it wrote since", async () => {
+    const entries: ForgetLedgerEntry[] = [];
+    const { reconciliation, storage } = await setUp({ entries });
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(reconciliation.undone()).toBe(0);
+    // Its writes take the positions back the copy lost.
+    await threeEvents(storage);
+    entries.push({
+      ...entry("c-1", "e-1", at(0)),
+      committed: false,
+      reached: { position: 2, generation: 0 },
+    });
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(1);
   });
 
   it("keeps the highest generation of the entries that told a restore, until it is declared or found", async () => {
@@ -1073,9 +1104,10 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.past()).toBe(0);
   });
 
-  it("counts nothing undone once a restore is known, nor what a drain applies of intentions", async () => {
+  it("counts nothing undone written by the time the latest restore was counted, nor what a drain applies of intentions", async () => {
     const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", at(0))];
-    const { reconciliation } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"] });
+    const { reconciliation, storage } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"] });
+    await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(0)));
     await reconciliation.restored(true);
     expect(await reconciliation.reconcile(NOW)).toBe(1);
     expect(reconciliation.undone()).toBe(0);

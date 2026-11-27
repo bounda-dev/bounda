@@ -29,8 +29,11 @@ for code of your own. See [tenants](/guides/personal-data/#tenants). Such a proj
 export `tenants`, a list of the tenants it serves or a function that resolves to one, which
 commands that go through every tenant reach beside those its stores list, as
 [`bounda forget-ledger prune --all-tenants`](/guides/personal-data/#keeping-the-ledger-short)
-and [`bounda tenant-key rewrap-master`](/guides/personal-data/#rotating-the-master-key) do;
-`loadProject` hands it as `tenants()`.
+[`bounda tenant-key rewrap-master`](/guides/personal-data/#rotating-the-master-key),
+[`status` and `remove-stale`](/guides/personal-data/#moving-a-tenants-key-to-another-store) do, and
+so does `forgetTenant` in an app `boot()` creates, which removes the copies of the tenant's key
+those stores hold; `loadProject` hands it as `tenants()`, and `boot({ config, tenants })` takes it
+with a configuration given directly.
 
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the
@@ -133,7 +136,8 @@ export default defineConfig({
 ```
 
 - The types take a `safeguard` only beside a `location`, and `"adequacy"` only beside a location an
-  adequacy decision covers (`AdequateLocation`). The app refuses to start, with
+  adequacy decision covers (`AdequateLocation`), with its `adequacyScope` where that decision covers
+  some providers alone (`PartiallyAdequateLocation`). The app refuses to start, with
   `ConfigurationError`, on a store kept under another regime without a safeguard, on a safeguard
   under `storage`'s regime, which is no transfer, on a safeguard on `storage` itself or under a
   `storage` that declares no location, which leaves nothing to tell a transfer by, and on a
@@ -144,8 +148,8 @@ export default defineConfig({
   Israel, the Isle of Man, Japan, Jersey, New Zealand, the Republic of Korea, Switzerland, the
   United Kingdom, the United States and Uruguay, as of November 2026), and for the European Economic
   Area under a `storage` outside it; never for `"global"`. The decisions for Canada and the United
-  States cover some organisations alone, commercial ones under PIPEDA and those certified under the
-  EU-US Data Privacy Framework: that the provider is one is yours to keep true.
+  States cover some recipients alone, as [partial adequacy decisions](#partial-adequacy-decisions)
+  says.
 - Bounda checks that list against
   [the Commission's own](https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/adequacy-decisions_en)
   every week, and a new decision, a review that changes what one covers or a revocation reaches
@@ -153,15 +157,69 @@ export default defineConfig({
   another safeguard. A revoked one leaves the list in that release, and an app that declares
   `adequacy` for it, on a store or a [recipient](/guides/personal-data/#recipients), no longer
   type-checks nor starts until it declares another.
+- Bounda also checks every week, on EUR-Lex, that each decision of the list is still in force:
+  a decision repealed, annulled or expired, even before the Commission's page says so, and an act
+  in force that reads as a decision Bounda does not know (a new one, a renewal, an amendment) fail
+  the check, and a decision whose validity ends within six months warns of it.
 - The record of processing names each transfer, the legal regime it goes to, its safeguard and its
   article, next to everything kept there, as article 30(1)(e) asks, and each person's
   [export](/guides/personal-data/#exporting-a-persons-data) lists it in `transfers`, as article
-  15(2) asks, each with its `location`, `safeguard`, `article` and `regime`, the regime `regimeOf`
-  names: a store in `"fedramp"` is under `"US"`.
+  15(2) asks, each with its `location`, `safeguard`, `article`, `regime` and `partialAdequacy`, the
+  regime `regimeOf` names: a store in `"fedramp"` is under `"US"`.
 - The safeguard itself, the clauses signed and the transfer impact assessment are yours: Bounda
   states what you declare. On Cloudflare, the keeper takes a
   [`jurisdiction`](/adapters/cloudflare/#data-location) of its own.
 
+
+### Partial adequacy decisions
+
+Two decisions of `ADEQUATE_COUNTRIES` cover some recipients in their country alone, and
+`PARTIAL_ADEQUACY` carries each as data: the `decision`, its `celex` number on EUR-Lex, whom it
+`covers`, the `condition` the recipient, or the provider that keeps a store, must meet, and the
+`scope` that names it.
+
+| Country | Decision | Covers | `adequacyScope` |
+|---|---|---|---|
+| Canada (`"ca"`) | Commission Decision 2002/2/EC | recipients subject to PIPEDA, as private-sector organisations are for what they handle in commercial activities | `"pipeda"` |
+| United States (`"us"`, `"fedramp"`, `"fedramp-high"`) | Commission Implementing Decision (EU) 2023/1795 | organisations on the Data Privacy Framework List, with an active certification that covers the data, human resources data or other | `"data-privacy-framework"` |
+
+A store kept there, or a [recipient](/guides/personal-data/#recipients) there, rests on `"adequacy"`
+only beside the decision's **`adequacyScope`**, which says you verified the condition:
+
+```ts
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL!, location: "eu" }),
+  readModels: {
+    search: postgresql({
+      url: process.env.SEARCH_URL!,
+      location: "us",
+      safeguard: "adequacy",
+      adequacyScope: "data-privacy-framework",
+    }),
+  },
+});
+```
+
+- Article 45(1) lets a decision cover "one or more specified sectors" of a country, and these two
+  cover recipients, not the country: the Data Privacy Framework decision covers transfers to
+  organisations on its list alone, and the Canadian one recipients subject to PIPEDA alone. Outside
+  that scope there is no adequacy decision for the transfer, which article 44 then allows only on
+  an appropriate safeguard of article 46, such as standard contractual clauses, with the transfer
+  impact assessment they come with. `adequacy` alone in these countries asserts a fact about the
+  provider that Bounda cannot see, so the types and the app ask you to state it, under articles
+  5(2) and 24, rather than read it into a country name.
+- The types take `adequacyScope` only beside `"adequacy"` in one of these locations, and only that
+  location's scope. The app refuses to start, with a `ConfigurationError` that names the decision
+  and its condition, on `"adequacy"` there without it or with another country's, and on an
+  `adequacyScope` anywhere else.
+- Bounda does not look the provider up: being on the list, and staying on it (a Data Privacy
+  Framework certification is renewed every year), is yours to verify while the transfer lasts.
+  The record of processing names, next to the transfer, the decision and what to verify, so a
+  review of the record asks it again; each person's export and a tenant's export give
+  `partialAdequacy`, the decision of `PARTIAL_ADEQUACY`, on every such transfer, and `null` on any
+  other.
+- The Commission's list writes these scopes after the two names, and the weekly check fails when
+  they change, as when a decision becomes one for the whole country.
 ## `runtime`
 
 - **`role`**, default `"all"`. What `app.start()` runs in this process: `"all"` and `"worker"` run
@@ -262,7 +320,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   [location](#data-location), does a store that declares none, or another without a
   [safeguard](#stores-in-another-jurisdiction): `defineTenantKeyStore(create, { location,
   safeguard })` declares one's. `forgetTenant` destroys the key
-  there. See
+  there, and the copies a move left in stores the configuration no longer names (see
+  [moving a tenant's key](/guides/personal-data/#moving-a-tenants-key-to-another-store)). See
   [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
   database, before it commits, by person's id, event id, time, reason and the fingerprints of the

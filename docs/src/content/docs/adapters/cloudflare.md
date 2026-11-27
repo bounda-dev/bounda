@@ -281,7 +281,8 @@ behind the fence, as any write. Each raise of a mark writes a key of its own, it
 time it was raised at, so a mark never goes down whatever the raise read, and the runtime tells a
 value raised before the object started, which a listing may show a minute late, from one raised
 since: a restore of the object's storage is counted at its start when the listing shows the marks
-that tell it, and otherwise a minute later, never twice (see
+that tell it, and otherwise a minute later, never twice, and `app.restored()` called within that
+minute, where it would count nothing, waits for it (see
 [restores](/guides/personal-data/#restores)). Each start removes the values raised more than a
 minute before it but the highest of them, once it compared them, and an object that compared every
 mark does so once a minute: a listing of a mark reads the values of the last few minutes, a key
@@ -383,7 +384,9 @@ configuration names none, refuses to start with a `ConfigurationError`.
 with the **`safeguard`** that allows keeping the store there, one of articles 45 to 47 as for any
 [store in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction). Here the
 objects are in the EU and the tenants' keys in the US, under the EU-US Data Privacy Framework's
-adequacy decision:
+adequacy decision, which covers organisations on its list alone, so the store declares the
+`adequacyScope` that says you verified Cloudflare is one (see [partial adequacy
+decisions](/reference/configuration/#partial-adequacy-decisions)):
 
 ```ts
 const storage = cloudflare({ jurisdiction: "eu" });
@@ -393,7 +396,12 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
-      tenantKeys: durableObjectTenantKeys({ storage, jurisdiction: "us", safeguard: "adequacy" }),
+      tenantKeys: durableObjectTenantKeys({
+        storage,
+        jurisdiction: "us",
+        safeguard: "adequacy",
+        adequacyScope: "data-privacy-framework",
+      }),
       forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },
   },
@@ -403,7 +411,8 @@ export default defineConfig({
 - Each store's keepers are created in its jurisdiction and never leave it; a keeper refuses each
   store's calls outside that store's, so a tenant whose key and ledger are kept apart has a keeper
   in each, both through the one `KEEPER` binding. The types take a `safeguard` only beside a
-  `jurisdiction`; without one, the keepers are in `storage`'s.
+  `jurisdiction`, and `adequacy` in `"us"`, `"fedramp"` or `"fedramp-high"` only beside its
+  `adequacyScope`; without a `jurisdiction`, the keepers are in `storage`'s.
 - The app refuses to start on a keeper under another legal regime without a safeguard, and on one
   under `storage`'s with a safeguard, which is no transfer: keepers in `"fedramp"` under objects in
   `"us"` take none, since both are in the United States. Choose before the first keeper exists, as
@@ -411,10 +420,13 @@ export default defineConfig({
 - Workers KV holds to no jurisdiction, so `kvTenantKeys` and `kvForgetLedger` take a `location`
   only together with a `safeguard`, and that location is `"global"`, anywhere in the world:
   `kvTenantKeys({ binding, location: "global", safeguard: "standard-contractual-clauses" })`. Any
-  other location is refused, and so is `adequacy`, which no decision gives for anywhere.
+  other location is refused, and so are `adequacy`, which no decision gives for anywhere, and an
+  `adequacyScope`.
 - `bounda personal-data inventory` states the transfer next to the store, by the legal regime it
-  goes to, `tenant-keys, in us, transferred to US under adequacy (article 45)`, and each
-  person's export lists it in `transfers`, with its `location` and its `regime`.
+  goes to, `tenant-keys, in us, transferred to US under adequacy (article 45), on Commission
+  Implementing Decision (EU) 2023/1795, ...`, with what to verify of the provider, and each
+  person's export lists it in `transfers`, with its `location`, its `regime` and its
+  `partialAdequacy`.
 
 `create-bounda` writes `jurisdiction: "eu"`: Bounda's defaults favour personal data staying in
 the European Union, and an object placed elsewhere cannot be moved later. Take it out for an

@@ -32,6 +32,12 @@ get today. Each item says why, so nobody discovers it the hard way:
   lands before then lands. An app without `runtime.personalData.tenantKeys` and without personal
   data keeps no such record, so a copy taken before a freeze takes writes again until the next
   `freezeTenant`. Restore with `bounda restore`.
+- **The count of restores after a count made while the ledger could not be read.** Two
+  instances, one of which has not read a restore counted a moment before, each handle their
+  restores once, but the second count takes the first's number when the ledger cannot say the
+  latest: a SQL or Durable Object ledger keeps the highest count alone, so `bounda status` counts
+  one restore fewer from then on. Workers KV keeps every count and counts past it. See
+  [Restores](/guides/personal-data/#restores).
 - **Ledger entries no app reads.** A ledger moved without its entries leaves them in the store it
   left, which no app of the tenant reads: `bounda forget-ledger prune --all-tenants` prunes them
   there and names a tenant whose database has not applied one that something still applies,
@@ -43,6 +49,14 @@ get today. Each item says why, so nobody discovers it the hard way:
   any more is not reached at all: clear it once no backup older than the move is restorable. Move
   a ledger with its entries. See
   [Keeping the ledger short](/guides/personal-data/#keeping-the-ledger-short).
+- **Copies of a tenant's key no configuration reaches.** `bounda tenant-key status` and
+  `remove-stale`, and a forgetting in an app that knows the whole project, reach the tenant key
+  stores the configuration names for the tenants they reach: a store no configuration names any
+  more is not read at all, nor is a KV store or keeper outside a Worker, and a forgetting in a
+  Durable Object, or in an app from `createApp` without `project`, reaches only the store its
+  configuration names. A copy left there holds the tenant's key under the master key until the
+  store is cleared by hand. Copy the record and then remove the old one when moving a tenant; see
+  [Moving a tenant's key to another store](/guides/personal-data/#moving-a-tenants-key-to-another-store).
 - **A ledger of your own defined anew for each tenant.** Without `storeId`, each definition is a
   store of its own, so `bounda forget-ledger prune --all-tenants` prunes it once per tenant it
   holds and per tenant whose configuration defines it. Give it a `storeId`, or define it outside
