@@ -330,12 +330,23 @@ export interface ExportedRow {
 }
 
 /**
+ * The version of the format a person's export is written in, as its `version` says.
+ */
+export const PERSONAL_DATA_EXPORT_VERSION: 1 = 1;
+
+/**
  * What `exportPersonalData` answers: every record the runtime holds that names the person, with
  * the fields marked `personal` of theirs opened, and the rows of every read model with a field
  * marked `.person()` that name them. Fields left unmarked are not personal data to Bounda and stay
  * out, as do the rows of read models without such a field and whatever left the store.
  */
 export interface PersonalDataExport {
+  /**
+   * The version of the format the export is written in, which a reader checks before it reads
+   * anything else: one that changes what a section holds, or adds one, is a new one. An export
+   * without it was written before Bounda numbered the format.
+   */
+  readonly version: typeof PERSONAL_DATA_EXPORT_VERSION;
   readonly personId: string;
   /**
    * When the export was taken, on the app's clock.
@@ -401,6 +412,7 @@ export interface PersonalDataExport {
 export interface PersonalDataExportHeader
   extends Pick<
     PersonalDataExport,
+    | "version"
     | "personId"
     | "exportedAt"
     | "position"

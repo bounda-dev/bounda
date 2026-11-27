@@ -447,26 +447,40 @@ describe("the KV forget ledger's listing", () => {
       ["p/7:e-7", JSON.stringify({ categories: null, restriction: null })],
       ["p/8:e-8", JSON.stringify({ categories: null, restriction: { payload: {} } })],
       ["p/9:e-9", JSON.stringify({ categories: null, restriction: { type: "T" } })],
-      ["p/a:e-a", JSON.stringify({ categories: null, restriction: { type: "T", payload: null } })],
-      ["p/b:e-b", JSON.stringify({ categories: null, restriction: { type: "T", payload: "p" } })],
-      ["p/c:e-c", JSON.stringify({ categories: null, redaction: "redacted" })],
-      ["p/d:e-d", JSON.stringify({ categories: null, redaction: null })],
-      ["p/e:e-e", JSON.stringify({ categories: null, redaction: { events: "e-1" } })],
-      ["p/f:e-f", JSON.stringify({ categories: null, redaction: {} })],
-      ["p/g:e-g", JSON.stringify({ categories: null, disclosure: "disclosed" })],
-      ["p/h:e-h", JSON.stringify({ categories: null, disclosure: null })],
+      ["p/10:e-a", JSON.stringify({ categories: null, restriction: { type: "T", payload: null } })],
+      ["p/11:e-b", JSON.stringify({ categories: null, restriction: { type: "T", payload: "p" } })],
+      ["p/12:e-c", JSON.stringify({ categories: null, redaction: "redacted" })],
+      ["p/13:e-d", JSON.stringify({ categories: null, redaction: null })],
+      ["p/14:e-e", JSON.stringify({ categories: null, redaction: { events: "e-1" } })],
+      ["p/15:e-f", JSON.stringify({ categories: null, redaction: {} })],
+      ["p/16:e-g", JSON.stringify({ categories: null, disclosure: "disclosed" })],
+      ["p/17:e-h", JSON.stringify({ categories: null, disclosure: null })],
       [
-        "p/i:e-i",
+        "p/18:e-i",
         JSON.stringify({
           categories: null,
           disclosure: { port: "p", recipient: "R", kind: "processor", country: "DE" },
         }),
       ],
       [
-        "p/j:e-j",
+        "p/19:e-j",
         JSON.stringify({
           categories: null,
           disclosure: { port: "p", recipient: "R", kind: "processor", country: 1, category: "c" },
+        }),
+      ],
+      [
+        "p/20:e-k",
+        JSON.stringify({
+          categories: null,
+          disclosure: {
+            port: "p",
+            recipient: "R",
+            kind: "processor",
+            country: "US",
+            transfer: { safeguard: "trust", article: "46", regime: "US" },
+            category: "c",
+          },
         }),
       ],
     ]);
@@ -481,16 +495,17 @@ describe("the KV forget ledger's listing", () => {
     for (const at of [
       "8:e-8",
       "9:e-9",
-      "a:e-a",
-      "b:e-b",
-      "c:e-c",
-      "d:e-d",
-      "e:e-e",
-      "f:e-f",
-      "g:e-g",
-      "h:e-h",
-      "i:e-i",
-      "j:e-j",
+      "10:e-a",
+      "11:e-b",
+      "12:e-c",
+      "13:e-d",
+      "14:e-e",
+      "15:e-f",
+      "16:e-g",
+      "17:e-h",
+      "18:e-i",
+      "19:e-j",
+      "20:e-k",
     ]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
@@ -593,6 +608,68 @@ describe("the KV forget ledger's listing", () => {
     ]);
     expect(read[0]).not.toHaveProperty("fingerprints");
     expect(read[0]).not.toHaveProperty("disclosure");
+  });
+
+  it("reads a disclosure written before disclosures kept their transfer with the one its country and safeguard name", async () => {
+    const { namespace, keys } = countingNamespace();
+    const identity = { port: "customer.mailer", recipient: "Mailchimp", kind: "processor" };
+    const values = new Map([
+      [
+        "p/1:e-1",
+        JSON.stringify({
+          categories: null,
+          disclosure: {
+            ...identity,
+            country: "US",
+            safeguard: "standard-contractual-clauses",
+            category: "contact",
+          },
+        }),
+      ],
+      [
+        "p/2:e-2",
+        JSON.stringify({
+          categories: null,
+          disclosure: { ...identity, country: "FR", safeguard: null, category: "contact" },
+        }),
+      ],
+    ]);
+    const reading = {
+      ...namespace,
+      get: async (name: string) => values.get(name) ?? null,
+    } as unknown as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: reading, prefix: "p/" });
+    for (const at of values.keys()) {
+      keys.set(at, { personId: "c-1", forgottenAt: minute(0), inValue: true });
+    }
+    const entry = {
+      personId: "c-1",
+      categories: null,
+      forgottenAt: minute(0),
+      reason: "requested",
+    };
+    expect(await ledger.read({ limit: 10 })).toEqual([
+      {
+        ...entry,
+        eventId: "e-1",
+        disclosure: {
+          ...identity,
+          country: "US",
+          transfer: {
+            safeguard: "standard-contractual-clauses",
+            article: "46(2)(c)",
+            regime: "US",
+            partialAdequacy: null,
+          },
+          category: "contact",
+        },
+      },
+      {
+        ...entry,
+        eventId: "e-2",
+        disclosure: { ...identity, country: "FR", transfer: null, category: "contact" },
+      },
+    ]);
   });
 
   it("keeps an object's entries under its name", async () => {

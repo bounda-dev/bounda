@@ -567,7 +567,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
           ),
         }),
       ),
-    ).toBeLessThanOrEqual(75);
+    ).toBeLessThanOrEqual(76);
   });
 
   it("leaves nothing of a scope whose last migration fails part-way, and replays it whole next time", async () => {

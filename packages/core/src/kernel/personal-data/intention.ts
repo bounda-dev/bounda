@@ -1,9 +1,12 @@
-import type { ForgetLedgerEntry, LedgerReached } from "../../adapter/storage/forget-ledger.ts";
+import type {
+  ForgetLedgerEntry,
+  LedgerDisclosure,
+  LedgerReached,
+} from "../../adapter/storage/forget-ledger.ts";
 import type {
   HeldPersonalKey,
   PersonalKeyStore,
 } from "../../adapter/storage/personal-key-store.ts";
-import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
 import { isFenceError } from "../../adapter/storage/tenant-fence.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
@@ -13,6 +16,11 @@ import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts
 import { disclosureEntryId } from "../shared/idempotency-key.ts";
 import type { ForgetScope } from "./forget.ts";
 import type { BoundedForgetLedger } from "./forget-ledger.ts";
+
+// A disclosure as the ledger keeps it, with its transfer as it was first recorded, and whose data.
+export interface PersonLedgerDisclosure extends LedgerDisclosure {
+  readonly person: string;
+}
 
 /**
  * The forgetting about to commit, as its `PersonalDataForgotten` will carry it.
@@ -60,7 +68,7 @@ export interface ForgetIntentions {
    * recording it again changes nothing. A strict ledger that does not take them rejects with
    * `ForgetLedgerUnavailableError`, before the port is called; any other failure is logged.
    */
-  disclose(disclosures: readonly Disclosure[], at: string): Promise<void>;
+  disclose(disclosures: readonly PersonLedgerDisclosure[], at: string): Promise<void>;
 }
 
 export interface CoveredByFunction {

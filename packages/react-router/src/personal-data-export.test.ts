@@ -11,6 +11,7 @@ import { personalDataExportResponse } from "./personal-data-export.ts";
 const header: PersonalDataExportPart = {
   kind: "header",
   header: {
+    version: 1,
     personId: "ada",
     exportedAt: "2026-01-01T00:00:00.000Z",
     position: 1,
@@ -60,6 +61,7 @@ describe("personalDataExportResponse", () => {
       "cache-control": "no-store",
     });
     expect(JSON.parse(await response.text())).toEqual({
+      version: 1,
       personId: "ada",
       exportedAt: "2026-01-01T00:00:00.000Z",
       position: 1,

@@ -246,7 +246,7 @@ describe("the intentions of forgetting", () => {
                 recipient: "Mailchimp",
                 kind: "processor",
                 country: "US",
-                safeguard: null,
+                transfer: null,
                 category: "contact",
               },
             ],
@@ -338,7 +338,7 @@ describe("the intentions of forgetting", () => {
           recipient: "Mailchimp",
           kind: "processor",
           country: "US",
-          safeguard: null,
+          transfer: null,
           category: "contact",
         },
       ],
@@ -391,16 +391,23 @@ describe("the intentions of forgetting", () => {
       recipient: "Mailchimp",
       kind: "processor",
       country: "US",
-      safeguard: null,
+      // Kept as given, whatever the lists say now.
+      transfer: {
+        safeguard: "adequacy" as const,
+        article: "45",
+        regime: "EEA" as const,
+        partialAdequacy: null,
+      },
       category: "contact",
     };
+    const inEea = { ...disclosure, person: "c-2", country: "FR", transfer: null };
     const { intentions } = await setUp({
       ledger: recordingLedger(async (entries) => {
         appended.push(...entries);
       }),
     });
-    await intentions.disclose([disclosure], NOW.toISOString());
-    const { person: _, ...ledgered } = disclosure;
+    await intentions.disclose([disclosure, inEea], NOW.toISOString());
+    const identity = { port: "customer.mailer", recipient: "Mailchimp", kind: "processor" };
     expect(appended).toEqual([
       {
         personId: "c-1",
@@ -408,7 +415,21 @@ describe("the intentions of forgetting", () => {
         eventId: disclosureEntryId(disclosure),
         forgottenAt: NOW.toISOString(),
         reason: "requested",
-        disclosure: ledgered,
+        disclosure: {
+          ...identity,
+          country: "US",
+          transfer: disclosure.transfer,
+          category: "contact",
+        },
+        committed: false,
+      },
+      {
+        personId: "c-2",
+        categories: null,
+        eventId: disclosureEntryId(inEea),
+        forgottenAt: NOW.toISOString(),
+        reason: "requested",
+        disclosure: { ...identity, country: "FR", transfer: null, category: "contact" },
         committed: false,
       },
     ]);

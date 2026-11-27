@@ -9,8 +9,9 @@ import {
   type LedgerReached,
   type LedgerRedaction,
   type LedgerRestriction,
+  ledgerDisclosureOf,
 } from "../storage/forget-ledger.ts";
-import type { SqlDatabase } from "./database.ts";
+import type { SqlDatabase, SqlTransaction } from "./database.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
 import type { LatestSchema } from "./migrations.ts";
@@ -324,6 +325,50 @@ export const forgetLedgerReachedStatement: ForgetLedgerReachedStatementFunction 
 ) =>
   `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"reached" TEXT`;
 
+const readableDisclosure = (text: string): LedgerDisclosure | null => {
+  try {
+    return ledgerDisclosureOf(JSON.parse(text));
+  } catch {
+    return null;
+  }
+};
+
+export interface MigrateForgetLedgerTransfersFunction {
+  (tx: SqlTransaction, table: string, dialect: Pick<SqlDialect, "placeholder">): Promise<void>;
+}
+
+// The disclosures the thirteenth version reads at a time.
+const TRANSFERS_PAGE = 500;
+
+/**
+ * The thirteenth version: every disclosure is written again as `ledgerDisclosureOf` reads it, so
+ * one recorded before disclosures kept their transfer keeps the one derived from its country and
+ * safeguard now, and no longer moves with what a later version would derive. One it cannot read is
+ * left as it was.
+ */
+export const migrateForgetLedgerTransfers: MigrateForgetLedgerTransfersFunction = async (
+  tx,
+  table,
+  { placeholder: p },
+) => {
+  let rows: readonly Record<string, unknown>[] = [];
+  do {
+    const last = rows[rows.length - 1];
+    rows = await tx.all(
+      `SELECT "tenant", "event_id", "disclosure" FROM ${table} WHERE "disclosure" IS NOT NULL${last === undefined ? "" : ` AND ("tenant", "event_id") > (${p(1)}, ${p(2)})`} ORDER BY "tenant", "event_id" LIMIT ${TRANSFERS_PAGE}`,
+      last === undefined ? [] : [last.tenant, last.event_id],
+    );
+    for (const row of rows) {
+      const disclosure = readableDisclosure(String(row.disclosure));
+      if (disclosure === null) continue;
+      await tx.run(
+        `UPDATE ${table} SET "disclosure" = ${p(1)} WHERE "tenant" = ${p(2)} AND "event_id" = ${p(3)}`,
+        [JSON.stringify(disclosure), row.tenant, row.event_id],
+      );
+    }
+  } while (rows.length === TRANSFERS_PAGE);
+};
+
 // One entry per event, committed when any of its appends is: an upsert that meets one event twice
 // in a statement fails on PostgreSQL.
 const onePerEvent = (entries: readonly ForgetLedgerEntry[]): readonly ForgetLedgerEntry[] => {
@@ -351,7 +396,13 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   const fingerprints: unknown = JSON.parse(String(row.fingerprints ?? null));
   const restriction = JSON.parse(String(row.restriction ?? null)) as LedgerRestriction | null;
   const redaction = JSON.parse(String(row.redaction ?? null)) as LedgerRedaction | null;
-  const disclosure = JSON.parse(String(row.disclosure ?? null)) as LedgerDisclosure | null;
+  const stored: unknown = JSON.parse(String(row.disclosure ?? null));
+  const disclosure = ledgerDisclosureOf(stored);
+  if (stored !== null && disclosure === null) {
+    throw new Error(
+      `The forget ledger's entry ${String(row.event_id)} holds a disclosure it cannot read`,
+    );
+  }
   const reached = JSON.parse(String(row.reached ?? null)) as LedgerReached | null;
   return {
     ...entry,

@@ -17,6 +17,7 @@ import {
   PROCESSING_RESTRICTION_LIFTED_EVENT,
 } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { disclosureOfLedger } from "../recipients/transfer.ts";
 import { RESTORE_GENERATION } from "../shared/restores.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import {
@@ -55,7 +56,7 @@ const DISCLOSURE: LedgerDisclosure = {
   recipient: "Acme Mail",
   kind: "processor",
   country: "DE",
-  safeguard: null,
+  transfer: null,
   category: "contact",
 };
 
@@ -522,9 +523,11 @@ describe("pruning a forget ledger with no app running", () => {
   });
 
   it("removes a disclosure the database holds as it was recorded, and keeps one it lacks", async () => {
+    const { transfer: _, ...identity } = DISCLOSURE;
     const stored: StoredDisclosure = {
       person: "p-1",
-      ...DISCLOSURE,
+      ...identity,
+      safeguard: null,
       firstAt: at(3),
       lastAt: at(3),
     };
@@ -903,7 +906,9 @@ describe("entries no app of the tenant applies", () => {
         named: await ledgerWith([]),
         readFrom: at(6),
         storage: database({
-          disclosures: [{ person: "p-1", ...DISCLOSURE, firstAt: at(5), lastAt: at(5) }],
+          disclosures: [
+            { ...disclosureOfLedger("p-1", DISCLOSURE), firstAt: at(5), lastAt: at(5) },
+          ],
         }),
       }),
     ).toEqual([]);

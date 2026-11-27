@@ -323,7 +323,7 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 6,
+        version: 7,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
@@ -1156,9 +1156,21 @@ describe("streamTenantExport", () => {
     expect(calls).toEqual(["rows after -", "keys after -", "keys after c-2"]);
   });
 
-  it("hands out every entry of the forget ledger, a page at a time, and none without a ledger", async () => {
+  it("hands out every entry of the forget ledger as kept, a page at a time, and none without a ledger", async () => {
     const { exported } = await setup();
-    const entries = [entry("c-1", 1), entry("c-2", 2), entry("c-3", 2), entry("c-4", 3)];
+    // A disclosure with the transfer it rested on then, whatever the regime of its country now.
+    const disclosed: ForgetLedgerEntry = {
+      ...entry("c-4", 3),
+      disclosure: {
+        port: "customer.mailer",
+        recipient: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        transfer: { safeguard: "adequacy", article: "45", regime: "EEA", partialAdequacy: null },
+        category: "contact",
+      },
+    };
+    const entries = [entry("c-1", 1), entry("c-2", 2), entry("c-3", 2), disclosed];
     for (const batchSize of [1, 2, 4, 5]) {
       expect(
         of(await exported({ batchSize, ledger: ledgerOf(entries) }), "forgetLedgerEntry").map(
@@ -1292,7 +1304,7 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 6,
+      version: 7,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",

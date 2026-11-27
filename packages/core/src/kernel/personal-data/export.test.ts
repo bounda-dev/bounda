@@ -348,6 +348,7 @@ describe("exportPersonalData", () => {
 
     const exported = await exportOf("c-1");
     expect(exported).toStrictEqual({
+      version: 1,
       personId: "c-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
       position: 7,

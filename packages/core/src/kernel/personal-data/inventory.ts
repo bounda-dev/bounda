@@ -268,11 +268,22 @@ export interface InventoryFinding {
 }
 
 /**
+ * The version of the format a `PersonalDataInventory` is written in, as its `version` says.
+ */
+export const PERSONAL_DATA_INVENTORY_VERSION: 1 = 1;
+
+/**
  * The record of processing activities of article 30 of the GDPR, as far as the app's code and
  * configuration say it: what is personal, whose, in which category, on which basis, for how long,
  * where it is kept and how, and who receives it, with what keeps the record from being complete.
  */
 export interface PersonalDataInventory {
+  /**
+   * The version of the format the inventory is written in, which a reader checks before it reads
+   * anything else: one that changes what a list holds, or adds one, is a new one. An inventory
+   * without it was written before Bounda numbered the format.
+   */
+  readonly version: typeof PERSONAL_DATA_INVENTORY_VERSION;
   readonly categories: readonly InventoryCategory[];
   /**
    * The decisions `app/personal-data.ts` says the app makes about a person by automated means
@@ -726,6 +737,7 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
   findings.push(...unlocated(resolved, collected.holders, recipients));
   const returning = portsByCategory(buildPortReturns({ registry, categories }));
   return {
+    version: PERSONAL_DATA_INVENTORY_VERSION,
     categories: categories.all.map((category) => ({
       name: category.name,
       basis: category.basis,

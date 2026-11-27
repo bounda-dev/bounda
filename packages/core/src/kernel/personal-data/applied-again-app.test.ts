@@ -14,6 +14,7 @@ import { PROCESSING_RESTRICTED_EVENT } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
+import { disclosureOfLedger } from "../recipients/transfer.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { FORGET_LEDGER_GRACE_MS } from "./reconciliation.ts";
 import { DEFAULT_TENANT } from "./tenant-keys.ts";
@@ -119,12 +120,18 @@ const restricting = (personId: string, eventId: string, at = LOST): ForgetLedger
   },
 });
 
+// Its transfer as it was kept, not as the lists would derive it now: applied again, it stays so.
 const DISCLOSURE: LedgerDisclosure = {
   port: "customer.mailer",
   recipient: "Acme Mail",
   kind: "processor",
   country: "DE",
-  safeguard: null,
+  transfer: {
+    safeguard: "standard-contractual-clauses",
+    article: "46(2)(c)",
+    regime: "CH",
+    partialAdequacy: null,
+  },
   category: "default",
 };
 
@@ -201,7 +208,10 @@ describe("applying a forget ledger's entries again by hand", () => {
     }
     expect((await app.exportPersonalData("c-3")).events[0]?.data).toEqual({ name: null });
     expect(await disclosuresOf(storage, "c-2")).toEqual([
-      expect.objectContaining({ ...DISCLOSURE, person: "c-2", firstAt: LOST.toISOString() }),
+      expect.objectContaining({
+        ...disclosureOfLedger("c-2", DISCLOSURE),
+        firstAt: LOST.toISOString(),
+      }),
     ]);
     // Each recorded in the ledger the configuration names, under its own id and time.
     expect(

@@ -43,6 +43,7 @@ import {
   type ExportedTransfer,
   type ExportedWithheld,
   NO_EXPORTED_RECORDS,
+  PERSONAL_DATA_EXPORT_VERSION,
   type PersonalDataExport,
   type PersonalDataExportHeader,
   type PersonalDataExportPart,
@@ -287,6 +288,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   });
   const exportedCategories = information.categories;
   const header: PersonalDataExportHeader = {
+    version: PERSONAL_DATA_EXPORT_VERSION,
     personId,
     exportedAt,
     position,

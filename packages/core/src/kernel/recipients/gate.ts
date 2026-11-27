@@ -10,6 +10,7 @@ import { fenceOf } from "../personal-data/fences.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
+import { ledgerDisclosureOfRecorded } from "./transfer.ts";
 
 /**
  * Thrown when the person whose data was read had their stream move since: a forgetting, a
@@ -176,7 +177,12 @@ export const createDisclosures: CreateDisclosuresFunction = ({
         .map(disclosureKey),
     );
     const fresh = disclosed.filter((row) => !stored.has(disclosureKey(row)));
-    if (fresh.length > 0) await intentions.disclose(fresh, at);
+    if (fresh.length > 0) {
+      await intentions.disclose(
+        fresh.map((row) => ({ person: row.person, ...ledgerDisclosureOfRecorded(row) })),
+        at,
+      );
+    }
     const letThrough = await storage.transact(async (transaction) => {
       for (const person of persons) {
         const fence = fences.get(person);

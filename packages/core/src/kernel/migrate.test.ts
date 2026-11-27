@@ -32,7 +32,7 @@ describe("migrateTables", { timeout: ON_DISK_TIMEOUT_MS }, () => {
       { database: "storage", scope: "storage", version: 12, latest: 12 },
       { database: "storage", scope: "checkpoints", version: 5, latest: 5 },
       { database: "readModels.customers", scope: "checkpoints", version: 5, latest: 5 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 12, latest: 12 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 13, latest: 13 },
       { database: "tenantKeys", scope: "tenant-keys", version: 1, latest: 1 },
     ]);
     expect(tablesIn(keys.db)).toEqual(["bounda_migrations", "bounda_tenant_keys"]);

@@ -13,6 +13,7 @@ import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { NO_RECIPIENTS } from "../recipients/build.ts";
+import { disclosureOfLedger } from "../recipients/transfer.ts";
 import { RESTORE_COVERED, RESTORE_GENERATION } from "../shared/restores.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
@@ -979,7 +980,7 @@ describe("what the reconciliation commits again", () => {
       recipient: "Mailer",
       kind: "processor",
       country: "IE",
-      safeguard: null,
+      transfer: null,
       category: "default",
     };
     const told: unknown[] = [];
@@ -995,7 +996,7 @@ describe("what the reconciliation commits again", () => {
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
     expect(await storage.recipients.disclosures("c-1")).toEqual([
-      expect.objectContaining({ ...disclosure, person: "c-1" }),
+      expect.objectContaining(disclosureOfLedger("c-1", disclosure)),
     ]);
     expect(told).toEqual([
       [
