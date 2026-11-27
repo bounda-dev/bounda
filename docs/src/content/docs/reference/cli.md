@@ -855,16 +855,27 @@ Without `--yes` it forgets nothing and says what it would destroy. Run again on 
 it prints the forgetting it finds. Its recipients are told by the app's worker, on the next start
 of an instance that runs it.
 
+It also removes every copy of the tenant's key left in a tenant key store its configuration no
+longer names, as a [move](/guides/personal-data/#moving-a-tenants-key-to-another-store) leaves one,
+reaching the stores as `tenant-key rewrap-master` does, and names each:
+
+```
+removed acme's copy in the tenant key store default's configuration names
+```
+
+A copy it could not remove, or a store it could not list, is named on stderr, and it exits with `2`:
+run it again once what failed is fixed.
+
 | Option | Meaning |
 | --- | --- |
 | `--yes` | Confirm: the tenant's data cannot be read again |
 | `--despite-legal-obligations` | Destroy too the keys a legal obligation keeps, once their data was handed back |
 | `--root`, `--config`, `--registry`, `--error-text`, `--actor` | As for `bounda rebuild` |
 
-Exit codes: `0` forgotten, `1` bad arguments, `2` no `--yes`, the project could not be loaded or
-the forgetting was refused.
+Exit codes: `0` forgotten, `1` bad arguments, `2` no `--yes`, the project could not be loaded,
+the forgetting was refused, or a copy of the tenant's key may be left.
 
-## `bounda tenant-key rotate` and `bounda tenant-key retire`
+## `bounda tenant-key`
 
 [Rotate the tenant's key](/guides/personal-data/#rotating-the-tenants-key): `rotate` puts a new
 version in force, under which the worker rewraps every key in the background; `retire` removes the
@@ -926,9 +937,49 @@ On Cloudflare the tenant key store, in keeper Durable Objects or in KV, is reach
 Worker: `rewrap-master` exits with `2` there, saying so, and each tenant's object rewraps its own
 key when [`createWorker`'s `scheduled`](/adapters/cloudflare/#rotating-the-master-key) wakes it.
 
-Both take `--root`, `--config`, `--registry`,
-`--error-text`, `--actor` and `--tenant`. Exit codes: `0` done, `1` bad arguments, `2` the project
-could not be loaded or the call was refused.
+`status` reads the same stores, writing nothing, so a rotation can be watched before
+`rewrap-master` runs and after: the tenants whose key, in any store, is under a previous master key
+of their own configuration's, and every copy of a tenant's key in a store its configuration no
+longer names, with what the store it names holds of it. It exits with `2` while a tenant's stores
+could not be listed or its record read, naming each, since what they hold is unknown, and while a
+forgotten tenant's key has a copy left:
+
+```bash
+bounda tenant-key status
+```
+
+```
+3 tenant key store(s) read
+1 tenant(s) with a key under a previous master key: globex; rewrap them with bounda tenant-key rewrap-master
+acme: a copy of its key in the tenant key store default's configuration names; the store its own configuration names holds the same key: remove it with bounda tenant-key remove-stale acme
+```
+
+`remove-stale` removes [those copies](/guides/personal-data/#moving-a-tenants-key-to-another-store),
+every tenant's or those it names, once the store each tenant's configuration names holds every
+version and file key the copy holds, or the tenant's forgetting. The only copy of a key is never
+removed; one holding keys the named store lacks, as versions retired there, is removed only with
+`--despite-lost-keys`; one in a store each tenant's own writer alone writes, as KV is, is named and
+left; and one in what turns out to be the named store itself, told apart only as two definitions,
+is left too. It exits with `2` while a copy is left or a store could not be listed, naming each:
+
+```bash
+bounda tenant-key remove-stale acme
+```
+
+```
+removed acme's copy in the tenant key store default's configuration names
+1 stale copy(ies) removed; none is left
+```
+
+| Option | Meaning |
+| --- | --- |
+| `[tenants...]` | The tenants whose copies `remove-stale` removes; every tenant's without any |
+| `--despite-lost-keys` | `remove-stale` removes too a copy holding versions or file keys the named store lacks: what was encrypted under them opens no more |
+
+Every one takes `--root`, `--config`, `--registry`, `--error-text` and `--tenant`, which for
+`rewrap-master`, `status` and `remove-stale` names the tenant to start from; `rotate` and `retire`
+take `--actor` too. Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded,
+the call was refused, or something was left as said above.
 
 ## `bounda forget-ledger expire`
 
@@ -1112,7 +1163,9 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
-`rewrapTenantKeys({ config: projectConfig, env, tenants: await tenants() })` for `rewrap-master`. `bounda forget-ledger prune` is
+`rewrapTenantKeys({ config: projectConfig, env, tenants: await tenants() })` for `rewrap-master`,
+`inspectTenantKeys` with the same arguments for `status`, and `removeStaleTenantKeys`, with `only`
+and `despiteLostKeys` besides, for `remove-stale`. `bounda forget-ledger prune` is
 `pruneTenantForgetLedger({ config, registry, env, tenant })` from `@bounda-dev/core`, on the
 configuration and registry `loadProject` resolves for the tenant, and `--all-tenants` runs it for
 each tenant `listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })`

@@ -211,6 +211,12 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = (options
         if (expected === null) await unwrap(directory.registerTenant(tenant));
         return unwrap(keeperOf(tenant).putTenantKeys(tenant, record, expected));
       },
+      remove: async (tenant, expected) => {
+        if (!(await unwrap(keeperOf(tenant).removeTenantKeys(tenant, expected)))) return false;
+        // The record is gone either way, and a tenant listed without one reads as none.
+        await unwrap(directory.unregisterTenant(tenant)).catch(() => undefined);
+        return true;
+      },
       list: (args) => unwrap(directory.listTenants(args)),
     };
   }, placement);

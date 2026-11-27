@@ -3,7 +3,7 @@ import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { configForTenant } from "../config/define-config.ts";
-import type { Config, ErrorText, ProjectConfig } from "../config/types.ts";
+import type { Config, ErrorText, ProjectConfig, ProjectTenants } from "../config/types.ts";
 import type { Clock } from "../contracts/clock.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
@@ -39,6 +39,11 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    * Used instead of importing `configPath`.
    */
   readonly config?: ProjectConfig;
+  /**
+   * Used instead of the `tenants` export of the configuration module, as with `config`, which has
+   * none: the tenants `forgetTenant` reaches beside those the stores list.
+   */
+  readonly tenants?: ProjectTenants;
   /**
    * Imports the configuration module instead of `configPath`, after `.env` is loaded; its
    * default export is the configuration. For a bundler that has to see the import to include the
@@ -107,6 +112,7 @@ export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
   | "configPath"
   | "registryPath"
   | "config"
+  | "tenants"
   | "importConfig"
   | "registry"
   | "loadEnv"
@@ -212,6 +218,7 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   configPath = "bounda.config.ts",
   registryPath = ".bounda/registry.ts",
   config,
+  tenants,
   importConfig,
   registry,
   loadEnv = true,
@@ -238,7 +245,7 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   return {
     config: configForTenant({ config: project, tenant: tenantIdOf(tenant) }),
     projectConfig: project,
-    tenants: () => tenantsOf(exported, source),
+    tenants: () => tenantsOf(tenants ?? exported, source),
     tenant,
     registry:
       registry ??
@@ -264,6 +271,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   configPath = "bounda.config.ts",
   registryPath = ".bounda/registry.ts",
   config,
+  tenants,
   importConfig,
   registry,
   loadEnv = true,
@@ -285,6 +293,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     configPath,
     registryPath,
     ...(config === undefined ? {} : { config }),
+    ...(tenants === undefined ? {} : { tenants }),
     ...(importConfig === undefined ? {} : { importConfig }),
     ...(registry === undefined ? {} : { registry }),
     loadEnv,
@@ -302,6 +311,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     ...(clock === undefined ? {} : { clock }),
     ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
     ...(witness === undefined ? {} : { witness }),
+    project: { config: project.projectConfig, tenants: project.tenants },
   });
 
   if (!signals) return app;

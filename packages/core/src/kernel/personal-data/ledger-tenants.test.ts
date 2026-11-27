@@ -52,6 +52,7 @@ const keysListing = (tenants: readonly string[], calls: string[] = []): TenantKe
     (): TenantKeyStore => ({
       get: async () => null,
       put: async () => false,
+      remove: async () => false,
       list: async ({ cursor, limit }) => {
         const from = cursor === null ? 0 : Number(cursor);
         calls.push(`list ${from}`);

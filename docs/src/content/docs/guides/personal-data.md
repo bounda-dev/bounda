@@ -2336,9 +2336,10 @@ starts meanwhile could not write to the database: a store of your own keeps the 
 field as it was put. A store written by several
 instances compares the record's revision and writes it in one step, so two instances never put two
 first versions in force; `defineTenantKeyStore` documents what a store of your own must do: get
-and put a tenant's record, and list its tenants in pages, from a cursor, which a rotation of the
-master key goes through. A store that cannot compare and set says `oneWriterPerTenant: true`, as
-KV's does, and nothing but each tenant's own writer then rewraps a record there.
+and put a tenant's record, remove it while it is still at the revision read, and list its tenants
+in pages, from a cursor, which a rotation of the master key goes through. A store that cannot
+compare and set says `oneWriterPerTenant: true`, as KV's does, and nothing but each tenant's own
+writer then rewraps or removes a record there.
 
 The database keeps its half of the binding in `bounda_tenancy`: the tenant it belongs to, the same
 random id and when it was bound. An app that serves another tenant than the database's is refused,
@@ -2381,6 +2382,39 @@ another tenant's. Which tenant an app serves depends on the host:
 
 A tenant whose name changes is another tenant: its database is refused with the old name's record.
 
+### Moving a tenant's key to another store
+
+A configuration that is a function of the tenant may move a tenant to another tenant key store:
+copy its record there, then name the new store for it. The record in the store it moved from is
+left behind, and nothing in the app reads it again, but it still holds the tenant's key, wrapped
+under the master key: a stale copy. It outlives a [forgetting](#forgetting-a-tenant) that reaches
+only the named store, and it keeps a version [retired](#rotating-the-tenants-key) since, so data
+meant to open no more opens with it.
+
+`bounda tenant-key status` reads every tenant key store the configuration can name, as
+[`rewrap-master`](#rotating-the-master-key) reaches them, writing nothing, and names each copy of a
+tenant's record in a store its configuration does not name, with what the named store holds of it:
+the same key, the tenant's forgetting, not all of the copy's versions and file keys, or no record
+at all. `bounda tenant-key remove-stale` removes the copies, every tenant's or those it names:
+
+```bash
+bounda tenant-key status
+bounda tenant-key remove-stale
+```
+
+A copy goes only once the named store holds every version and file key it holds, or the tenant's
+forgetting; one holding keys the named store lacks, as versions retired there since, stays unless
+`--despite-lost-keys` says what was encrypted under them, a backup or the database the copy belonged
+to, may open no more; and the only copy of a tenant's key never goes, whatever the options say. A
+store each tenant's own writer alone writes, as KV is, is never written from outside: its copies
+are named, and are removed by hand. Two definitions of one store, as a configuration that builds a
+new `defineTenantKeyStore` for each tenant makes, look like two: before it removes a copy,
+`remove-stale` writes it again and reads the named record, which moves with it exactly when they
+are one store, and refuses then, the tenant's own record untouched. It exits with `2` while a copy
+is left or a store could not be listed, naming each. `inspectTenantKeys` and
+`removeStaleTenantKeys` from `@bounda-dev/core` do the same in code, with `projectConfig` and
+`tenants` from `loadProject`, as `rewrapTenantKeys` takes them.
+
 ### Rotating the master key
 
 Generate a new key, give it the variable the configuration reads, and move the old one to
@@ -2410,6 +2444,12 @@ Object that sleeps or a tenant no process serves, is reached from the tenant key
 - On Cloudflare each tenant's record is written by its own object alone, which KV needs: the
   `scheduled` of `createWorker` wakes every object still under a previous master key, which
   rewraps its own (see [Cloudflare](/adapters/cloudflare/#rotating-the-master-key)).
+
+`bounda tenant-key status` follows a rotation in Node across the same stores, writing nothing: it
+names the tenants whose key, in any store, is still under a previous master key of their own
+configuration's, so it watches a rotation before `rewrap-master` runs and after, and exits with `2`
+while a tenant's stores could not be listed or its record read, since a store not read may hold
+keys under a previous master key. `inspectTenantKeys` returns the same in code.
 
 Each app logs once its own tenant's key is rewrapped:
 
@@ -2868,14 +2908,22 @@ data must stay: [hand it back](#handing-a-tenant-back) first, then pass
 `{ despiteLegalObligations: true }`. The other
 exemptions of article 17(3) do not stop it: they let the controller keep data, without requiring it
 to. It resolves to
-`{ tenant, forgottenAt, eventId }`; `bounda forget-tenant <tenant> --yes` does the same from a
-terminal.
+`{ tenant, forgottenAt, eventId, keyCopies }`; `bounda forget-tenant <tenant> --yes` does the same
+from a terminal.
 
 It runs in this order, every step safe to run again:
 
 1. The tenant's record in the tenant key store loses every version of its key and records the
    forgetting, when and under which event id. This is the step that cannot be undone, and the only
    one needed: from here on nothing personal of the tenant opens anywhere.
+   A copy of the record left in a store the tenant's configuration no longer names, as a
+   [move](#moving-a-tenants-key-to-another-store) leaves one, still holds the key: an app that
+   knows the whole project, as `boot()` and the CLI create it, removes every copy the stores of
+   the configuration reach once the others are done, and `keyCopies` says which it removed, and
+   those left, logged as an error, which calling `forgetTenant` again, on this app or one started
+   on the forgotten tenant, tries again. An app from `createApp` without `project`, as a Durable
+   Object's, reaches only the store its configuration names, and `keyCopies` is `null`; `bounda
+   tenant-key status` names a forgotten tenant's copies and exits with `2` while one is left.
 2. The fences of the [forget ledger](#the-forget-ledger), the database and every read model's
    database are raised for good, as a [freeze](#freezing-a-tenant)'s are, but `forgotten`: from
    here on no write of the tenant lands from any instance, however long ago it last read the

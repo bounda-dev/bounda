@@ -29,6 +29,7 @@ import {
   FORGET_LEDGER_PAGE,
   FORGET_LEDGER_REREAD_MS,
 } from "./reconciliation.ts";
+import type { RemovedStaleTenantKeys } from "./tenant-key-stores.ts";
 import { transactRetrying } from "./transact.ts";
 
 /**
@@ -57,6 +58,13 @@ export interface TenantForgottenResult {
   readonly tenant: string;
   readonly forgottenAt: string;
   readonly eventId: string;
+  /**
+   * The copies of the tenant's key in tenant key stores its configuration no longer names, in an
+   * app given `project`, as `boot` creates it: those removed, and those left, which keep its data
+   * readable until removed, as calling `forgetTenant` again tries. `null` in an app without
+   * `project`, which reaches only the store its configuration names.
+   */
+  readonly keyCopies: RemovedStaleTenantKeys | null;
 }
 
 export interface AddressedTenantFunction {

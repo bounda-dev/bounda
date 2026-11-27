@@ -43,6 +43,14 @@ get today. Each item says why, so nobody discovers it the hard way:
   any more is not reached at all: clear it once no backup older than the move is restorable. Move
   a ledger with its entries. See
   [Keeping the ledger short](/guides/personal-data/#keeping-the-ledger-short).
+- **Copies of a tenant's key no configuration reaches.** `bounda tenant-key status` and
+  `remove-stale`, and a forgetting in an app that knows the whole project, reach the tenant key
+  stores the configuration names for the tenants they reach: a store no configuration names any
+  more is not read at all, nor is a KV store or keeper outside a Worker, and a forgetting in a
+  Durable Object, or in an app from `createApp` without `project`, reaches only the store its
+  configuration names. A copy left there holds the tenant's key under the master key until the
+  store is cleared by hand. Copy the record and then remove the old one when moving a tenant; see
+  [Moving a tenant's key to another store](/guides/personal-data/#moving-a-tenants-key-to-another-store).
 - **A ledger of your own defined anew for each tenant.** Without `storeId`, each definition is a
   store of its own, so `bounda forget-ledger prune --all-tenants` prunes it once per tenant it
   holds and per tenant whose configuration defines it. Give it a `storeId`, or define it outside

@@ -3,7 +3,12 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createApp, type PersonalDataExport, silentLogger } from "@bounda-dev/core";
-import type { ForgetLedger, ForgetLedgerEntry, TenantKeyStore } from "@bounda-dev/core/adapter";
+import type {
+  ForgetLedger,
+  ForgetLedgerEntry,
+  TenantKeyRecord,
+  TenantKeyStore,
+} from "@bounda-dev/core/adapter";
 import { loadProject } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { registry as failingRegistry } from "./fixtures/rebuild-project/.bounda/failing-registry.ts";
@@ -2394,6 +2399,15 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       for (const tenant of [shared, own]) await joinUnder(tenant);
       process.env.REWRAP_FROM = "REWRAP_B";
       process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      const pending = await cli(["tenant-key", "status", ...rewrap], fixture);
+      expect(besidesLogs(pending.stderr)).toBe("");
+      expect(pending.code).toBe(EXIT_OK);
+      expect(pending.stdout).toMatch(
+        new RegExp(
+          `^1 tenant key store\\(s\\) read\n\\d+ tenant\\(s\\) with a key under a previous master key: .*${shared}.*; rewrap them with bounda tenant-key rewrap-master\n$`,
+        ),
+      );
+      expect(pending.stdout).not.toContain(own);
       // A store of its own, which nothing lists: only the tenants export reaches it.
       const unnamed = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
       expect(besidesLogs(unnamed.stderr)).toBe("");
@@ -2401,6 +2415,14 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       expect(unnamed.stdout).not.toContain(own);
 
       process.env.REWRAP_TENANTS = [own, broken].join(",");
+      const unread = await cli(["tenant-key", "status", ...rewrap], fixture);
+      expect(unread.code).toBe(EXIT_FAILURE);
+      expect(unread.stdout).toBe(
+        `2 tenant key store(s) read\n1 tenant(s) with a key under a previous master key: ${own}; rewrap them with bounda tenant-key rewrap-master\n`,
+      );
+      expect(besidesLogs(unread.stderr)).toBe(
+        `error: the stores ${broken}'s configuration names could not be listed: Error\n1 tenant(s) not read: what their stores hold is unknown, so keep the previous master keys\n`,
+      );
       const named = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
       expect(named.code).toBe(EXIT_FAILURE);
       expect(named.stdout).toBe(`rewrapped ${own}\n`);
@@ -2455,6 +2477,191 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     }
   });
 
+  it("names the copies of keys a move left, removes them once safe, and removes a forgotten tenant's with its forgetting", async () => {
+    process.env.MOVED_MASTER = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+      "base64",
+    );
+    const movedConfig = ["--config", "moved-keys.config.ts"];
+    const loaded = (tenant: string) =>
+      loadProject<typeof fixtureRegistry>({
+        root: fixture,
+        configPath: "moved-keys.config.ts",
+        tenant,
+        logger: silentLogger,
+      });
+    const keysOf = async (tenant: string): Promise<TenantKeyStore> => {
+      const { config: tenantConfig } = await loaded(tenant);
+      const source = tenantConfig.runtime?.personalData?.tenantKeys;
+      if (source === undefined || source.kind !== "bounda-tenant-key-store") {
+        throw new Error("no tenant key store");
+      }
+      return source.create({ env: process.env });
+    };
+    // The store every tenant started in, whatever MOVED_TENANTS says.
+    const firstKeysOf = async (tenant: string): Promise<TenantKeyStore> => {
+      const was = process.env.MOVED_TENANTS;
+      delete process.env.MOVED_TENANTS;
+      try {
+        return await keysOf(tenant);
+      } finally {
+        if (was !== undefined) process.env.MOVED_TENANTS = was;
+      }
+    };
+    const recordOf = async (store: TenantKeyStore, tenant: string): Promise<TenantKeyRecord> => {
+      const held = await store.get(tenant);
+      if (held === null) throw new Error("no record");
+      const { revision: _, ...record } = held;
+      return record;
+    };
+    const copy = async (
+      tenant: string,
+      change: (held: TenantKeyRecord) => TenantKeyRecord = (held) => held,
+    ): Promise<void> => {
+      const record = await recordOf(await firstKeysOf(tenant), tenant);
+      await (await keysOf(tenant)).put(tenant, change(record), null);
+    };
+    const [held, only, differs, forgotten] = [
+      tenantOf("held"),
+      tenantOf("only"),
+      tenantOf("differs"),
+      tenantOf("forgotten"),
+    ];
+    const where = "in the tenant key store default's configuration names";
+    try {
+      for (const tenant of [held, only, differs, forgotten]) {
+        const app = await createApp({
+          ...(await loaded(tenant)),
+          env: process.env,
+          logger: silentLogger,
+        });
+        await app.commands.join({ memberId: "m-1", name: "Ana" });
+        await app.stop();
+      }
+      process.env.MOVED_TENANTS = [held, only, differs, forgotten].join(",");
+      await copy(held);
+      await copy(forgotten);
+      await copy(differs, (record) => ({
+        ...record,
+        keys: record.keys.map((key) => ({ ...key, fingerprint: "another" })),
+      }));
+
+      const status = await cli(["tenant-key", "status", ...movedConfig], fixture);
+      expect(besidesLogs(status.stderr)).toBe("");
+      expect(status.code).toBe(EXIT_OK);
+      const kid = (await (await keysOf(differs)).get(differs))?.keys[0]?.kid;
+      expect(status.stdout).toBe(
+        [
+          "2 tenant key store(s) read",
+          "no tenant's key read is under a previous master key",
+          `${differs}: a copy of its key ${where}, holding versions ${kid}, which the store its own configuration names lacks`,
+          `${forgotten}: a copy of its key ${where}; the store its own configuration names holds the same key: remove it with bounda tenant-key remove-stale ${forgotten}`,
+          `${held}: a copy of its key ${where}; the store its own configuration names holds the same key: remove it with bounda tenant-key remove-stale ${held}`,
+          `${only}: a copy of its key ${where}, the only one: the store its own configuration names holds no record of it`,
+          "",
+        ].join("\n"),
+      );
+
+      const live = await recordOf(await firstKeysOf(forgotten), forgotten);
+      const forgetting = await cli(
+        ["forget-tenant", forgotten, ...movedConfig, "--yes", "--despite-legal-obligations"],
+        fixture,
+      );
+      expect(besidesLogs(forgetting.stderr)).toBe("");
+      expect(forgetting.code).toBe(EXIT_OK);
+      expect(forgetting.stdout).toMatch(
+        new RegExp(`^forgot tenant ${forgotten} at .*\nremoved ${forgotten}'s copy ${where}\n$`),
+      );
+
+      // A copy of the forgotten tenant's key put back, as a restore of the store it moved from would.
+      await (await firstKeysOf(forgotten)).put(forgotten, live, null);
+      const breach = await cli(["tenant-key", "status", ...movedConfig], fixture);
+      expect(breach.code).toBe(EXIT_FAILURE);
+      expect(breach.stdout).toContain(
+        `${forgotten}: a copy of its key ${where}, though it is forgotten: remove it with bounda tenant-key remove-stale ${forgotten}\n`,
+      );
+      expect(besidesLogs(breach.stderr)).toBe(
+        "error: 1 copy(ies) of forgotten tenants' keys left: remove them with bounda tenant-key remove-stale\n",
+      );
+
+      const removing = await cli(
+        ["tenant-key", "remove-stale", held, forgotten, ...movedConfig],
+        fixture,
+      );
+      expect(besidesLogs(removing.stderr)).toBe("");
+      expect(removing.code).toBe(EXIT_OK);
+      expect(removing.stdout).toBe(
+        `removed ${forgotten}'s copy ${where}\nremoved ${held}'s copy ${where}\n2 stale copy(ies) removed; none is left\n`,
+      );
+
+      const refusing = await cli(["tenant-key", "remove-stale", ...movedConfig], fixture);
+      expect(refusing.code).toBe(EXIT_FAILURE);
+      expect(refusing.stdout).toBe("");
+      expect(besidesLogs(refusing.stderr)).toBe(
+        [
+          `error: ${differs}'s copy ${where} was not removed: The copy of tenant ${differs}'s key ${where} holds versions ${kid}, which the store ${differs}'s own configuration names lacks: what was encrypted under them opens with nothing else. Remove it despite them only once nothing needs them`,
+          `error: ${only}'s copy ${where} was not removed: The copy of tenant ${only}'s key ${where} is the only one: the store ${only}'s own configuration names holds no record of it, so removing it would leave its data nothing to open with`,
+          "2 copy(ies) not removed or store(s) not listed: run again once what failed is fixed",
+          "",
+        ].join("\n"),
+      );
+
+      const despite = await cli(
+        ["tenant-key", "remove-stale", differs, only, ...movedConfig, "--despite-lost-keys"],
+        fixture,
+      );
+      expect(despite.code).toBe(EXIT_FAILURE);
+      expect(despite.stdout).toBe(`removed ${differs}'s copy ${where}\n`);
+      expect(besidesLogs(despite.stderr)).toContain(
+        `error: ${only}'s copy ${where} was not removed`,
+      );
+
+      // A copy of the forgetting alone, holding no key, opens nothing: named, but not a breach.
+      await (await firstKeysOf(forgotten)).put(forgotten, { ...live, keys: [] }, null);
+      const keyless = await cli(["tenant-key", "status", ...movedConfig], fixture);
+      expect(besidesLogs(keyless.stderr)).toBe("");
+      expect(keyless.code).toBe(EXIT_OK);
+      expect(keyless.stdout).toContain(
+        `${forgotten}: a copy of its key ${where}, though it is forgotten`,
+      );
+
+      // A tenant the tenants export names whose configuration cannot load: its stores are unread.
+      process.env.MOVED_REACH = "broken-reach";
+      const unread = await cli(["forget-tenant", held, ...movedConfig, "--yes"], fixture);
+      expect(unread.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(unread.stderr)).toBe(
+        `error: the stores broken-reach's configuration names could not be listed: Error\n1 copy(ies) of tenant ${held}'s key not removed or tenant(s) not read: run bounda forget-tenant ${held} --yes again once what failed is fixed\n`,
+      );
+      delete process.env.MOVED_REACH;
+      const reread = await cli(["forget-tenant", held, ...movedConfig, "--yes"], fixture);
+      expect(besidesLogs(reread.stderr)).toBe("");
+      expect(reread.code).toBe(EXIT_OK);
+
+      // The store a starting tenant's configuration names is down: nothing can be read.
+      process.env.MOVED_DOWN = "1";
+      for (const command of ["status", "remove-stale"]) {
+        const down = await cli(["tenant-key", command, ...movedConfig, "--tenant", held], fixture);
+        expect(down.code).toBe(EXIT_FAILURE);
+        expect(down.stdout).toBe("");
+        expect(besidesLogs(down.stderr)).toBe(
+          "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+        );
+      }
+      for (const command of ["status", "remove-stale"]) {
+        const missing = await cli(
+          ["tenant-key", command, "--config", "nowhere.config.ts"],
+          fixture,
+        );
+        expect(missing.code).toBe(EXIT_FAILURE);
+        expect(missing.stdout).toBe("");
+        expect(besidesLogs(missing.stderr)).toMatch(/^error: .*nowhere\.config\.ts[^\n]*\n$/);
+      }
+    } finally {
+      for (const name of ["MOVED_MASTER", "MOVED_TENANTS", "MOVED_REACH", "MOVED_DOWN"]) {
+        delete process.env[name];
+      }
+    }
+  });
+
   it("says why it rewraps nothing for a project without keys, or one it cannot load", async () => {
     const plain = await cli(["tenant-key", "rewrap-master"], fixture);
     expect(plain.code).toBe(EXIT_FAILURE);
@@ -2494,6 +2701,16 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     ]) {
       expect(forget.stdout.replace(/\s+/g, " ")).toContain(text);
     }
+    const removing = await cli(["tenant-key", "remove-stale", "--help"], fixture);
+    for (const text of [
+      "remove every copy of a tenant's key in a tenant key store its configuration no longer names, once the store it names holds the same key or the tenant's forgetting; a copy that is the only one is never removed",
+      "[tenants...]",
+      "the tenants whose copies to remove (default: every tenant's)",
+      "--despite-lost-keys",
+      "remove too a copy holding versions or file keys the named store lacks, as versions retired there: what was encrypted under them opens no more",
+    ]) {
+      expect(removing.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
     const exporting = await cli(["export-tenant", "--help"], fixture);
     for (const text of [
       "hand a frozen tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log. Freeze it first with bounda freeze-tenant",
@@ -2530,7 +2747,9 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       expect(checking.stdout.replace(/\s+/g, " ")).toContain(text);
     }
     const keys = await cli(["tenant-key", "--help"], fixture);
-    expect(keys.stdout).toContain("rotate the tenant's key, and retire its older versions");
+    expect(keys.stdout.replace(/\s+/g, " ")).toContain(
+      "rotate the tenant's key and retire its older versions, rewrap every tenant's under a new master key, and look after the tenant key stores",
+    );
     for (const [command, text] of [
       [
         "rotate",
@@ -2543,6 +2762,10 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       [
         "rewrap-master",
         "rewrap under the master key in force the key of every tenant every tenant key store the configuration names holds, each through its own configuration, their apps running or not: once none is left under a previous master key, remove those",
+      ],
+      [
+        "status",
+        "read every tenant key store the configuration names, writing nothing: the tenants whose key is still under a previous master key, and every copy of a tenant's key in a store its configuration no longer names; exits with 2 while a store cannot be read or a forgotten tenant's key has a copy left",
       ],
     ] as const) {
       const help = await cli(["tenant-key", command, "--help"], fixture);

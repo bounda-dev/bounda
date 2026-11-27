@@ -66,6 +66,7 @@ const keeper = (name: string) => env.KEEPER.get(env.KEEPER.idFromName(name));
 const apart = (store: TenantKeyStore, prefix: string): TenantKeyStore => ({
   get: (tenant) => store.get(`${prefix}${tenant}`),
   put: (tenant, held, expected) => store.put(`${prefix}${tenant}`, held, expected),
+  remove: (tenant, expected) => store.remove(`${prefix}${tenant}`, expected),
   list: async ({ cursor, limit }) => {
     const page = await store.list({ cursor: `${prefix}${cursor ?? ""}`, limit });
     const tenants = page.tenants
@@ -103,6 +104,47 @@ describe("the tenant key store in keeper objects", () => {
     );
     expect(listed).toContainEqual({ tenant });
     expect(store.oneWriterPerTenant).toBeUndefined();
+  });
+
+  it("removes a tenant's record from its keeper and the directory, the record gone though the directory fails to unlist it", async () => {
+    const listed = (tenant: string) =>
+      runInDurableObject(keeper("directory"), (_object, state) =>
+        state.storage.sql
+          .exec(`SELECT "tenant" FROM "bounda_keeper_tenants" WHERE "tenant" = ?`, tenant)
+          .toArray(),
+      );
+    const tenant = `${fresh()}gone`;
+    const store = await durableObjectTenantKeys({ storage }).create({ env });
+    await store.put(tenant, record("s-1"), null);
+    expect(await store.remove(tenant, 2)).toBe(false);
+    expect(await store.remove(tenant, 1)).toBe(true);
+    expect(await store.get(tenant)).toBeNull();
+    expect(await listed(tenant)).toEqual([]);
+
+    const directoryId = env.KEEPER.idFromName("directory");
+    const real = env.KEEPER.get(directoryId);
+    const failing = {
+      idFromName: (name: string) => env.KEEPER.idFromName(name),
+      get: (id: DurableObjectId) =>
+        id.equals(directoryId)
+          ? {
+              registerTenant: (name: string) => real.registerTenant(name),
+              listTenants: (args: { cursor: string | null; limit: number }) =>
+                real.listTenants(args),
+              unregisterTenant: async () => {
+                throw new Error("directory unavailable");
+              },
+            }
+          : env.KEEPER.get(id),
+    };
+    const unlisting = await durableObjectTenantKeys({ storage }).create({
+      env: { ...env, KEEPER: failing as unknown as typeof env.KEEPER },
+    });
+    const kept = `${fresh()}kept`;
+    await unlisting.put(kept, record("s-1"), null);
+    expect(await unlisting.remove(kept, 1)).toBe(true);
+    expect(await unlisting.get(kept)).toBeNull();
+    expect(await listed(kept)).toEqual([{ tenant: kept }]);
   });
 
   it("lists a tenant whose first record was refused, and none whose record it never asked for", async () => {
@@ -491,6 +533,8 @@ describe("a keeper object", () => {
       },
     };
     expect(await other.registerTenant(tenant)).toEqual(directoryOnly);
+    expect(await other.unregisterTenant(tenant)).toEqual(directoryOnly);
+    expect(await other.removeTenantKeys(tenant, 1)).toEqual(mismatched);
     expect(await other.listTenants({ cursor: null, limit: 1 })).toEqual(directoryOnly);
     expect(await unnamed.listTenants({ cursor: null, limit: 1 })).toEqual(directoryOnly);
   });

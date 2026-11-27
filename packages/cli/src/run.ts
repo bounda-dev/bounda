@@ -7,6 +7,7 @@ import {
   type DeadLetterKind,
   type DeadLetterStatus,
   errorFields,
+  inspectTenantKeys,
   isUnreadable,
   type ListDeadLettersArgs,
   type Logger,
@@ -25,6 +26,7 @@ import {
   type RestrictionNotice,
   readTenantExport,
   rebuildReadModel,
+  removeStaleTenantKeys,
   resolveErrorText,
   rewrapTenantKeys,
   type SubscriberFailure,
@@ -40,7 +42,7 @@ import {
   isAdapter,
   type Storage,
 } from "@bounda-dev/core/adapter";
-import type { Config, ErrorText } from "@bounda-dev/core/config";
+import type { Config, ErrorText, ProjectConfig } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
@@ -66,6 +68,11 @@ import {
   formatSchema,
   formatStatus,
 } from "./status-output.ts";
+import {
+  formatKeyCopiesLeft,
+  formatRemovedCopy,
+  formatTenantKeysStatus,
+} from "./tenant-key-output.ts";
 import { standInWorkersRuntime } from "./workers-runtime.ts";
 
 export interface Output {
@@ -249,16 +256,19 @@ const withApp = async <T>(
   options: ProjectOptions,
   cwd: string,
   stderr: Output,
-  work: (app: App) => Promise<T>,
+  work: (app: App, errorText: ErrorText) => Promise<T>,
 ): Promise<T | typeof EXIT_FAILURE> => {
   const logger = logTo(stderr);
   const project = await load(options, cwd, logger, stderr);
   if (project === undefined) return EXIT_FAILURE;
+  const errorText = resolveErrorText(errorTextArgs(options, project.config));
   let app: App | undefined;
   try {
     app = await boot({
       root: rootOf(options, cwd),
-      config: project.config,
+      // The whole project, so forgetting a tenant reaches every tenant key store it can name.
+      config: project.projectConfig,
+      tenants: project.tenants,
       ...(options.errorText ? { errorText: "include" as const } : {}),
       registry: project.registry,
       loadEnv: false,
@@ -266,9 +276,9 @@ const withApp = async <T>(
       logger,
       ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
     });
-    return await work(app);
+    return await work(app, errorText);
   } catch (error) {
-    return failed(stderr, error, resolveErrorText(errorTextArgs(options, project.config)));
+    return failed(stderr, error, errorText);
   } finally {
     await app?.stop();
   }
@@ -815,17 +825,32 @@ const runForgetTenant = (
     );
     return Promise.resolve(EXIT_FAILURE);
   }
-  return withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
-    const forgotten = await actingAs(app, options).forgetTenant(tenant, {
-      despiteLegalObligations: options.despiteLegalObligations,
-    });
-    // Its notices go out from the app's own worker, which the next start runs.
-    line(
-      stdout,
-      `forgot tenant ${forgotten.tenant} at ${forgotten.forgottenAt} (event ${forgotten.eventId}); the app tells its recipients in the background`,
-    );
-    return EXIT_OK;
-  });
+  return withApp(
+    { ...options, tenant: options.tenant ?? tenant },
+    cwd,
+    stderr,
+    async (app, errorText) => {
+      const forgotten = await actingAs(app, options).forgetTenant(tenant, {
+        despiteLegalObligations: options.despiteLegalObligations,
+      });
+      // Its notices go out from the app's own worker, which the next start runs.
+      line(
+        stdout,
+        `forgot tenant ${forgotten.tenant} at ${forgotten.forgottenAt} (event ${forgotten.eventId}); the app tells its recipients in the background`,
+      );
+      const copies = forgotten.keyCopies;
+      if (copies === null) return EXIT_OK;
+      for (const copy of copies.removed) line(stdout, formatRemovedCopy(copy));
+      const left = formatKeyCopiesLeft(copies, errorText);
+      for (const each of left) line(stderr, each);
+      if (left.length === 0) return EXIT_OK;
+      line(
+        stderr,
+        `${left.length} copy(ies) of tenant ${forgotten.tenant}'s key not removed or tenant(s) not read: run bounda forget-tenant ${forgotten.tenant} --yes again once what failed is fixed`,
+      );
+      return EXIT_FAILURE;
+    },
+  );
 };
 
 // The write fence lives in the database, so freezing from here holds every running instance too.
@@ -1124,6 +1149,49 @@ const runMigrate = async (
   }
 };
 
+interface TenantKeyProject {
+  readonly config: ProjectConfig;
+  readonly tenant: string | undefined;
+  readonly tenants: readonly string[];
+  readonly errorText: ErrorText;
+}
+
+// The whole project, as every command over every tenant key store reads it; `undefined` once the
+// failure is printed.
+const loadKeyProject = async (
+  options: ProjectOptions,
+  cwd: string,
+  stderr: Output,
+): Promise<TenantKeyProject | undefined> => {
+  // A Cloudflare project's configuration loads, so its store says where it is read.
+  standInWorkersRuntime();
+  try {
+    const project = await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registry: NO_REGISTRY,
+      logger: logTo(stderr),
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
+    });
+    return {
+      config: project.projectConfig,
+      tenant: project.tenant,
+      tenants: await project.tenants(),
+      errorText: resolveErrorText(errorTextArgs(options, project.config)),
+    };
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+};
+
+const walkOf = ({ config, tenant, tenants }: TenantKeyProject) => ({
+  config,
+  env: process.env,
+  tenants,
+  ...(tenant === undefined ? {} : { tenant }),
+});
+
 // Every tenant key store the configuration can name, as a configuration that is a function of the
 // tenant may give each tenant one of its own: the previous master keys can go only once none holds
 // a key under them.
@@ -1133,36 +1201,11 @@ const runRewrapMaster = async (
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
-  // A Cloudflare project's configuration loads, so its store says where the rotation runs.
-  standInWorkersRuntime();
-  const logger = logTo(stderr);
-  let config: Config;
-  let project: Awaited<ReturnType<typeof loadProject>>;
-  let listed: readonly string[];
+  const project = await loadKeyProject(options, cwd, stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  const { errorText } = project;
   try {
-    project = await loadProject({
-      root: rootOf(options, cwd),
-      configPath: options.config,
-      registry: NO_REGISTRY,
-      logger,
-      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
-    });
-    ({ config } = project);
-    resolveErrorText({ env: process.env });
-    listed = await project.tenants();
-  } catch (error) {
-    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
-    return EXIT_FAILURE;
-  }
-  const errorText = resolveErrorText(errorTextArgs(options, config));
-  const { tenant } = project;
-  try {
-    const { rewrapped, left, unreached } = await rewrapTenantKeys({
-      config: project.projectConfig,
-      env: process.env,
-      tenants: listed,
-      ...(tenant === undefined ? {} : { tenant }),
-    });
+    const { rewrapped, left, unreached } = await rewrapTenantKeys(walkOf(project));
     for (const each of rewrapped) line(stdout, `rewrapped ${each}`);
     // Each tenant once, though its stores could not be listed and its key could not be rewrapped.
     const pending = new Set<string>();
@@ -1193,6 +1236,64 @@ const runRewrapMaster = async (
     return EXIT_FAILURE;
   } catch (error) {
     return failed(stderr, error, errorText);
+  }
+};
+
+// Read-only, across every store the configuration can name: what a rotation of the master key has
+// left, and the copies of keys a move left behind. A copy of a forgotten tenant's key, or a tenant
+// not read, fails it, so a scheduled check sees it.
+const runTenantKeyStatus = async (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const project = await loadKeyProject(options, cwd, stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  try {
+    const inspection = await inspectTenantKeys(walkOf(project));
+    const { out, err } = formatTenantKeysStatus(inspection, project.errorText);
+    for (const each of out) line(stdout, each);
+    for (const each of err) line(stderr, each);
+    return err.length === 0 ? EXIT_OK : EXIT_FAILURE;
+  } catch (error) {
+    return failed(stderr, error, project.errorText);
+  }
+};
+
+interface RemoveStaleOptions extends ProjectOptions {
+  readonly despiteLostKeys: boolean;
+}
+
+const runRemoveStale = async (
+  tenants: readonly string[],
+  options: RemoveStaleOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const project = await loadKeyProject(options, cwd, stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  try {
+    const removal = await removeStaleTenantKeys({
+      ...walkOf(project),
+      ...(tenants.length === 0 ? {} : { only: tenants }),
+      despiteLostKeys: options.despiteLostKeys,
+    });
+    for (const copy of removal.removed) line(stdout, formatRemovedCopy(copy));
+    const left = formatKeyCopiesLeft(removal, project.errorText);
+    for (const each of left) line(stderr, each);
+    if (left.length === 0) {
+      line(stdout, `${removal.removed.length} stale copy(ies) removed; none is left`);
+      return EXIT_OK;
+    }
+    line(
+      stderr,
+      `${left.length} copy(ies) not removed or store(s) not listed: run again once what failed is fixed`,
+    );
+    return EXIT_FAILURE;
+  } catch (error) {
+    return failed(stderr, error, project.errorText);
   }
 };
 
@@ -1840,7 +1941,9 @@ export const runCli: RunCliFunction = async ({
 
   const tenantKey = program
     .command("tenant-key")
-    .description("rotate the tenant's key, and retire its older versions");
+    .description(
+      "rotate the tenant's key and retire its older versions, rewrap every tenant's under a new master key, and look after the tenant key stores",
+    );
   actingOptions(
     tenantKey
       .command("rotate")
@@ -1872,6 +1975,30 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (options: ProjectOptions) => {
     exitCode = await runRewrapMaster(options, cwd, stdout, stderr);
+  });
+  projectOptions(
+    tenantKey
+      .command("status")
+      .description(
+        "read every tenant key store the configuration names, writing nothing: the tenants whose key is still under a previous master key, and every copy of a tenant's key in a store its configuration no longer names; exits with 2 while a store cannot be read or a forgotten tenant's key has a copy left",
+      ),
+  ).action(async (options: ProjectOptions) => {
+    exitCode = await runTenantKeyStatus(options, cwd, stdout, stderr);
+  });
+  projectOptions(
+    tenantKey
+      .command("remove-stale")
+      .description(
+        "remove every copy of a tenant's key in a tenant key store its configuration no longer names, once the store it names holds the same key or the tenant's forgetting; a copy that is the only one is never removed",
+      )
+      .argument("[tenants...]", "the tenants whose copies to remove (default: every tenant's)")
+      .option(
+        "--despite-lost-keys",
+        "remove too a copy holding versions or file keys the named store lacks, as versions retired there: what was encrypted under them opens no more",
+        false,
+      ),
+  ).action(async (tenants: readonly string[], options: RemoveStaleOptions) => {
+    exitCode = await runRemoveStale(tenants, options, cwd, stdout, stderr);
   });
 
   projectOptions(

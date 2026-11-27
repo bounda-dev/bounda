@@ -331,7 +331,10 @@ database from then on, and the only thing a copy restored before then still need
 was whom to tell. The forgetting raises a fence in the database, every read model's database and
 the ledger that no write of the tenant passes, from any instance, however long ago it last read
 the tenant: nothing lands after the forgetting, nor after the ledger's clear, and a disclosure that
-raced it either landed first, and its recipient is told, or never reached its port.
+raced it either landed first, and its recipient is told, or never reached its port. A copy of the
+tenant's key left in a tenant key store its configuration no longer names goes with it, in an app
+that knows the whole project, and `bounda tenant-key status` names one left
+([moving a tenant's key](/guides/personal-data/#moving-a-tenants-key-to-another-store)).
 What a copy kept in the clear is in the [limitations](/reference/limitations/).
 
 **Left to the app.** Deciding that a ground of 17(1) applies; what the app writes outside the
