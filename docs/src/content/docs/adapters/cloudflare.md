@@ -278,7 +278,8 @@ behind the fence, as any write. Each raise of a mark writes a key of its own, it
 time it was raised at, so a mark never goes down whatever the raise read, and the runtime tells a
 value raised before the object started, which a listing may show a minute late, from one raised
 since: a restore of the object's storage is counted at its start when the listing shows the marks
-that tell it, and otherwise a minute later, never twice (see
+that tell it, and otherwise a minute later, never twice, and `app.restored()` called within that
+minute, where it would count nothing, waits for it (see
 [restores](/guides/personal-data/#restores)). Each start removes the values raised more than a
 minute before it but the highest of them, once it compared them, and an object that compared every
 mark does so once a minute: a listing of a mark reads the values of the last few minutes, a key

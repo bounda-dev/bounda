@@ -134,7 +134,15 @@ describe("scheduled command worker", () => {
       return nextDueAt(args);
     });
     expect(await harness.worker.runOnce()).toBe(2);
-    expect(steps.slice(0, 5)).toEqual(["check", "restored true", "sweep", "claim", "sweep"]);
+    // Settled once reconciled, before anything else the pass does.
+    expect(steps.slice(0, 6)).toEqual([
+      "check",
+      "restored true",
+      "sweep",
+      "settled",
+      "claim",
+      "sweep",
+    ]);
     // The pass settles the restore it handled, and only that one.
     expect(steps.filter((step) => step === "settled")).toHaveLength(1);
     expect(entries.map(({ message }) => message)).toEqual([

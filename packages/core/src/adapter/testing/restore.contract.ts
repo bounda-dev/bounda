@@ -1856,11 +1856,49 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
     );
 
     it(
+      "counts no restore more for a forgetting the ledger takes only after the restore that lost it was counted",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        // A forgetting committed after the copy, whose copy to the ledger, given up for its
+        // timeout, lands only once the restore that lost it is counted and reconciled.
+        const { committed: _, ...late } = await intentionOf(first, "ana", clock.now());
+        clock.advance(GENERATION_INTERVAL_MS);
+        await first.app.runUntilIdle();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect((await restored.app.status()).restoresFound).toBe(1);
+        await opened.at(-1)?.append([late]);
+        await restored.app.stop();
+        clock.advance(FORGET_LEDGER_GRACE_MS);
+        const next = await start(storage, definition, BEFORE_ROTATION, clock);
+        await next.app.runUntilIdle();
+        expect(await forgettings(next.app, "ana")).toEqual([late.eventId]);
+        expect((await next.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
       "counts a declared restore once, however often the declaration is made again after it failed or went through",
       async () => {
         const target = await create();
         const clock = createFixedClock(START);
         const { definition, state } = faultyLedger(target.forgetLedger);
+        // On a ledger whose reads lag, a declaration that counts nothing answers once they show
+        // every mark raised before the start: the clock passes their delay as it waits.
+        const declared = (started: Started, options?: { readonly again?: boolean }) => {
+          const answer = started.app.restored(options);
+          clock.advance(LAG_MS);
+          return answer;
+        };
         const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
         await write(first, "ana");
         await first.app.stop();
@@ -1874,16 +1912,16 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         state.marksFailing = false;
         expect(await restored.app.restored()).toEqual({ counted: true });
         expect((await restored.app.status()).restoresFound).toBe(1);
-        expect(await restored.app.restored()).toEqual({ counted: false });
+        expect(await declared(restored)).toEqual({ counted: false });
         await restored.app.stop();
         // Run again by an operator, as `bounda restored` is, before the database moved on.
         const again = await start(target.storage, definition, BEFORE_ROTATION, clock);
-        expect(await again.app.restored()).toEqual({ counted: false });
+        expect(await declared(again)).toEqual({ counted: false });
         expect((await again.app.status()).restoresFound).toBe(1);
         // Told the database is a copy taken right then, it counts it.
         expect(await again.app.restored({ again: true })).toEqual({ counted: true });
         expect((await again.app.status()).restoresFound).toBe(2);
-        expect(await again.app.restored()).toEqual({ counted: false });
+        expect(await declared(again)).toEqual({ counted: false });
         await expectReadable(again, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,
@@ -2162,9 +2200,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         clock.advance(1);
         const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
         // An adapter that counts the restore where it puts the copy back counts past the database;
-        // a declaration then counts nothing more.
-        await restored.app.restored();
+        // a declaration then counts nothing more, once the reads show every mark.
+        const declared = restored.app.restored();
         clock.advance(LAG_MS);
+        await declared;
         await restored.app.runUntilIdle();
         expect((await restored.app.status()).restoresFound).toBe(2);
         await restored.app.stop();
@@ -2172,6 +2211,40 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         clock.advance(LAG_MS);
         await next.app.runUntilIdle();
         expect((await next.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts, on a ledger whose reads lag, a restore declared before the reads show the count made since a copy of where handling the last one left the database",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        expect(await first.app.restored()).toEqual({ counted: true });
+        // Where handling that declaration left the database.
+        await target.backUp();
+        await first.app.stop();
+        const between = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        expect(await between.app.restored({ again: true })).toEqual({ counted: true });
+        await between.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        // Its reads show neither count yet: the declaration waits until they do.
+        const declared = restored.app.restored();
+        clock.advance(LAG_MS);
+        // An adapter that counts the restore where it puts the copy back counted it at start.
+        expect([{ counted: true }, { counted: false }]).toContainEqual(await declared);
+        expect((await restored.app.status()).restoresFound).toBe(3);
+        expect(await restored.app.restored()).toEqual({ counted: false });
+        await restored.app.stop();
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(3);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -2244,6 +2317,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await first.app.restored();
         expect((await first.app.status()).restoresFound).toBe(1);
         // A forgetting committed since, which the database lost while nothing told the mark.
+        clock.advance(1);
         const { committed: _, ...copied } = await intentionOf(first, "ana", clock.now());
         await opened[0]?.append([copied]);
         await first.app.stop();

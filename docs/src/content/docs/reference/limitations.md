@@ -32,6 +32,12 @@ get today. Each item says why, so nobody discovers it the hard way:
   lands before then lands. An app without `runtime.personalData.tenantKeys` and without personal
   data keeps no such record, so a copy taken before a freeze takes writes again until the next
   `freezeTenant`. Restore with `bounda restore`.
+- **The count of restores after a count made while the ledger could not be read.** Two
+  instances, one of which has not read a restore counted a moment before, each handle their
+  restores once, but the second count takes the first's number when the ledger cannot say the
+  latest: a SQL or Durable Object ledger keeps the highest count alone, so `bounda status` counts
+  one restore fewer from then on. Workers KV keeps every count and counts past it. See
+  [Restores](/guides/personal-data/#restores).
 - **Ledger entries no app reads.** A ledger moved without its entries leaves them in the store it
   left, which no app of the tenant reads: `bounda forget-ledger prune --all-tenants` prunes them
   there and names a tenant whose database has not applied one that something still applies,
